@@ -140,3 +140,36 @@ export const shareFromMnemonic = (id: number, mnemonic: string): ShamirShare => 
   id,
   data: mnemonicToEntropy(mnemonic, wordlist)
 });
+
+const parseShareInput = (input: string) => {
+  const trimmed = input.trim();
+  const match = /^(\d+)\s*:\s*(.+)$/.exec(trimmed);
+  if (!match) {
+    throw new Error('Share must include id prefix like "1: <share>".');
+  }
+  const id = Number(match[1]);
+  if (!Number.isInteger(id) || id < 1) {
+    throw new Error('Share id must be a positive integer.');
+  }
+  const payload = match[2].trim();
+  if (!payload) {
+    throw new Error('Share value is missing.');
+  }
+  return { id, payload };
+};
+
+export const formatShareMnemonic = (share: ShamirShare) => `${share.id}: ${shareToMnemonic(share)}`;
+
+export const formatShareHex = (share: ShamirShare) => `${share.id}: ${shareToHex(share)}`;
+
+export const parseShareMnemonic = (input: string): ShamirShare => {
+  const { id, payload } = parseShareInput(input);
+  const normalized = payload.split(/\s+/).join(' ').trim();
+  return shareFromMnemonic(id, normalized);
+};
+
+export const parseShareHex = (input: string): ShamirShare => {
+  const { id, payload } = parseShareInput(input);
+  const normalized = payload.replace(/\s+/g, '');
+  return shareFromHex(id, normalized);
+};

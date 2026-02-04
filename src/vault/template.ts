@@ -25,11 +25,19 @@ const STYLE = `
   .vault-seed button { padding: 6px 12px; border-radius: 8px; border: 1px solid #d8d2c6; background: #f7f3ec; cursor: pointer; }
   .secret { font-family: "Courier New", monospace; background: #f7f3ec; padding: 12px; border-radius: 10px; transition: filter 0.3s ease, opacity 0.3s ease; }
   .secret[data-hidden="true"] { filter: blur(6px); opacity: 0.35; user-select: none; }
+  .secret--compact { padding: 8px 10px; font-size: 0.85rem; }
+  .passphrase { display: flex; flex-direction: column; gap: 6px; }
+  .passphrase__header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .passphrase__header button { padding: 4px 10px; border-radius: 8px; border: 1px solid #d8d2c6; background: #f7f3ec; cursor: pointer; }
   .path { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px dashed #eee; }
   .path:last-child { border-bottom: none; }
   .meta { display: flex; flex-direction: column; gap: 4px; color: #555; font-size: 0.9rem; }
   .actions { display: flex; gap: 12px; margin-bottom: 12px; }
   .actions button { padding: 10px 14px; border-radius: 10px; border: 1px solid #d8d2c6; background: #f7f3ec; cursor: pointer; }
+  .derived-group { border: 1px solid #eee; background: #fdf9f2; border-radius: 12px; padding: 12px; margin-bottom: 12px; }
+  .derived-group__header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 10px; }
+  .derived-group__meta { display: flex; flex-direction: column; gap: 4px; }
+  .derived-group__passphrase { min-width: 220px; }
   .derived-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #eee; }
   .derived-item:last-child { border-bottom: none; }
   .derived-item code { font-family: "Courier New", monospace; }

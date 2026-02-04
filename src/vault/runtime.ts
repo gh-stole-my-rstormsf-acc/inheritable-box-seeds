@@ -1,7 +1,7 @@
 import { decryptWithPassword, decryptWithShamir } from '../shared/crypto/vault';
 import { deriveEvmAddresses } from '../shared/derivation/evm';
 import { buildAddressCsv } from '../shared/derivation/csv';
-import { shareFromHex, shareFromMnemonic } from '../shared/crypto/shamir';
+import { parseShareHex, parseShareMnemonic } from '../shared/crypto/shamir';
 import type { Vault, VaultData, PathConfig } from '../shared/types';
 import { deriveKeyArgon2Wasm } from './argon2Wasm';
 
@@ -28,6 +28,28 @@ const setStatus = (message: string, tone: 'info' | 'error' = 'info') => {
   status.dataset.tone = tone;
 };
 
+const attachRevealHandlers = (scope: ParentNode) => {
+  scope.querySelectorAll<HTMLButtonElement>('[data-reveal]').forEach((button) => {
+    let timeoutId: number | undefined;
+    button.addEventListener('click', () => {
+      const targetId = button.dataset.reveal;
+      if (!targetId) return;
+      const target = document.getElementById(targetId);
+      if (!target) return;
+      const hidden = target.dataset.hidden === 'true';
+      target.dataset.hidden = hidden ? 'false' : 'true';
+      button.textContent = hidden ? 'Hide' : 'Reveal';
+      if (hidden) {
+        if (timeoutId) window.clearTimeout(timeoutId);
+        timeoutId = window.setTimeout(() => {
+          target.dataset.hidden = 'true';
+          button.textContent = 'Reveal';
+        }, 30000);
+      }
+    });
+  });
+};
+
 const renderSeedList = (data: VaultData) => {
   const container = document.querySelector<HTMLDivElement>('[data-seeds]');
   if (!container) return;
@@ -51,14 +73,25 @@ const renderSeedList = (data: VaultData) => {
     seed.paths.forEach((pathConfig: PathConfig, pathIndex) => {
       const pathEl = document.createElement('div');
       pathEl.className = 'path';
-      const passphraseHint = pathConfig.passphrase ? '[passphrase set]' : '[none]';
+      const passphraseId = `seed-${seedIndex}-path-${pathIndex}-passphrase`;
+      const passphraseMarkup = pathConfig.passphrase
+        ? `
+            <div class="passphrase">
+              <div class="passphrase__header">
+                <span>Passphrase</span>
+                <button data-reveal="${passphraseId}">Reveal</button>
+              </div>
+              <p class="secret secret--compact" id="${passphraseId}" data-hidden="true">${pathConfig.passphrase}</p>
+            </div>
+          `
+        : '<span>Passphrase: [none]</span>';
       pathEl.innerHTML = `
         <div>
           <strong>${pathConfig.label}</strong>
           <p>${pathConfig.path}</p>
         </div>
         <div class="meta">
-          <span>Passphrase: ${passphraseHint}</span>
+          ${passphraseMarkup}
           <span>Addresses: ${pathConfig.deriveCount}</span>
         </div>
       `;
@@ -68,25 +101,7 @@ const renderSeedList = (data: VaultData) => {
     container.appendChild(seedEl);
   });
 
-  container.querySelectorAll<HTMLButtonElement>('[data-reveal]').forEach((button) => {
-    let timeoutId: number | undefined;
-    button.addEventListener('click', () => {
-      const targetId = button.dataset.reveal;
-      if (!targetId) return;
-      const target = document.getElementById(targetId);
-      if (!target) return;
-      const hidden = target.dataset.hidden === 'true';
-      target.dataset.hidden = hidden ? 'false' : 'true';
-      button.textContent = hidden ? 'Hide' : 'Reveal';
-      if (hidden) {
-        if (timeoutId) window.clearTimeout(timeoutId);
-        timeoutId = window.setTimeout(() => {
-          target.dataset.hidden = 'true';
-          button.textContent = 'Reveal';
-        }, 30000);
-      }
-    });
-  });
+  attachRevealHandlers(container);
 };
 
 const renderDerivedAddresses = () => {
@@ -99,21 +114,64 @@ const renderDerivedAddresses = () => {
     return;
   }
 
-  const list = document.createElement('div');
-  list.className = 'derived-list';
+  const groups = new Map<string, { seedLabel: string; path: string; passphrase: string; rows: typeof rows }>();
   rows.forEach((row) => {
-    const item = document.createElement('div');
-    item.className = 'derived-item';
-    item.innerHTML = `
-      <div>
-        <strong>${row.seedLabel}</strong>
-        <p>${row.path} (index ${row.index})</p>
-      </div>
-      <code>${row.address}</code>
-    `;
-    list.appendChild(item);
+    const key = `${row.seedLabel}::${row.path}::${row.passphrase}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.rows.push(row);
+    } else {
+      groups.set(key, { seedLabel: row.seedLabel, path: row.path, passphrase: row.passphrase, rows: [row] });
+    }
   });
-  container.appendChild(list);
+
+  let groupIndex = 0;
+  groups.forEach((group) => {
+    const groupEl = document.createElement('section');
+    groupEl.className = 'derived-group';
+    const passphraseId = `derived-passphrase-${groupIndex}`;
+    const passphraseMarkup = group.passphrase
+      ? `
+          <div class="passphrase">
+            <div class="passphrase__header">
+              <span>Passphrase</span>
+              <button data-reveal="${passphraseId}">Reveal</button>
+            </div>
+            <p class="secret secret--compact" id="${passphraseId}" data-hidden="true">${group.passphrase}</p>
+          </div>
+        `
+      : '<span>Passphrase: [none]</span>';
+    groupEl.innerHTML = `
+      <div class="derived-group__header">
+        <div class="derived-group__meta">
+          <strong>${group.seedLabel}</strong>
+          <span>${group.path}</span>
+        </div>
+        <div class="derived-group__passphrase">
+          ${passphraseMarkup}
+        </div>
+      </div>
+    `;
+
+    const list = document.createElement('div');
+    list.className = 'derived-list';
+    group.rows.forEach((row) => {
+      const item = document.createElement('div');
+      item.className = 'derived-item';
+      item.innerHTML = `
+        <div>
+          <p>Index ${row.index}</p>
+        </div>
+        <code>${row.address}</code>
+      `;
+      list.appendChild(item);
+    });
+    groupEl.appendChild(list);
+    container.appendChild(groupEl);
+    groupIndex += 1;
+  });
+
+  attachRevealHandlers(container);
 };
 
 const handleDeriveAddresses = () => {
@@ -236,12 +294,10 @@ const renderApp = () => {
     });
   } else {
     const threshold = vault.encryption.threshold;
-    const total = vault.encryption.totalShares;
     const inputs = Array.from({ length: threshold }, (_, index) => `
       <div class="share">
         <label>Share ${index + 1}</label>
-        <input type="number" min="1" max="${total}" data-share-id placeholder="ID" />
-        <textarea data-share-value placeholder="Paste share"></textarea>
+        <textarea data-share-value placeholder="Paste share (e.g. &quot;1: ...&quot;)"></textarea>
       </div>
     `).join('');
 
@@ -261,26 +317,22 @@ const renderApp = () => {
     const decryptButton = decryptContainer.querySelector<HTMLButtonElement>('[data-decrypt-btn]');
 
     decryptButton?.addEventListener('click', () => {
-      const format = (decryptContainer.querySelector<HTMLInputElement>('input[name="shareFormat"]:checked')?.value ?? 'mnemonic') as
-        | 'mnemonic'
-        | 'hex';
-      const shareIdInputs = Array.from(decryptContainer.querySelectorAll<HTMLInputElement>('[data-share-id]'));
-      const shareValueInputs = Array.from(decryptContainer.querySelectorAll<HTMLTextAreaElement>('[data-share-value]'));
-      const shares = shareIdInputs.map((input, idx) => {
-        const id = Number(input.value);
-        const value = shareValueInputs[idx]?.value?.trim() ?? '';
-        if (!id || !value) {
-          throw new Error('Provide all required shares.');
-        }
-        return format === 'hex' ? shareFromHex(id, value) : shareFromMnemonic(id, value);
-      });
-
       try {
+        const format = (decryptContainer.querySelector<HTMLInputElement>('input[name="shareFormat"]:checked')?.value ??
+          'mnemonic') as 'mnemonic' | 'hex';
+        const shareValueInputs = Array.from(decryptContainer.querySelectorAll<HTMLTextAreaElement>('[data-share-value]'));
+        const shares = shareValueInputs.map((input) => {
+          const value = input.value.trim();
+          if (!value) {
+            throw new Error('Provide all required shares.');
+          }
+          return format === 'hex' ? parseShareHex(value) : parseShareMnemonic(value);
+        });
+
         const data = decryptWithShamir({ shares, vault });
         state.decrypted = data;
         setStatus('Vault decrypted.', 'info');
         renderSeedList(data);
-        shareIdInputs.forEach((input) => (input.value = ''));
         shareValueInputs.forEach((input) => (input.value = ''));
       } catch (error) {
         setStatus((error as Error).message, 'error');

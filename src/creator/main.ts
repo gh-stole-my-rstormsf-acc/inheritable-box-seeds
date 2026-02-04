@@ -3,7 +3,7 @@ import { validateBip39Mnemonic, normalizeMnemonic } from './validation/mnemonic'
 import { validateHdPathTemplate } from './validation/hdPath';
 import { encryptWithPassword, encryptWithShamir } from '../shared/crypto/vault';
 import { buildVaultHtml } from '../vault/template';
-import { shareToHex, shareToMnemonic } from '../shared/crypto/shamir';
+import { formatShareHex, formatShareMnemonic } from '../shared/crypto/shamir';
 import type { VaultData } from '../shared/types';
 import { deriveKeyArgon2Worker } from './crypto/argon2Worker';
 import { validateArgon2Params, DEFAULT_ARGON2_MIN } from './validation/argon2';
@@ -356,8 +356,8 @@ const handleGenerate = async () => {
         vaultHtml: html,
         shares: shares.map((share) => ({
           id: share.id,
-          words: shareToMnemonic(share),
-          hex: shareToHex(share)
+          words: formatShareMnemonic(share),
+          hex: formatShareHex(share)
         }))
       };
       setStatus('Vault generated and downloaded. Record your shares.', 'info');

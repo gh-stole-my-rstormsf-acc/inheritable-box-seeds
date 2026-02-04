@@ -15,14 +15,13 @@ const escapeCsv = (value: string | number) => {
 };
 
 export const buildAddressCsv = (rows: CsvAddressRow[]) => {
-  const header = ['seed_label', 'hd_path', 'passphrase_hint', 'address_index', 'address'];
+  const header = ['seed_label', 'hd_path', 'passphrase', 'address_index', 'address'];
   const lines = [header.map(escapeCsv).join(',')];
   for (const row of rows) {
-    const hint = row.passphrase ? '[passphrase set]' : '[none]';
     lines.push([
       escapeCsv(row.seedLabel),
       escapeCsv(row.path),
-      escapeCsv(hint),
+      escapeCsv(row.passphrase),
       escapeCsv(row.index),
       escapeCsv(row.address)
     ].join(','));

@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { decryptAesGcm, encryptAesGcm } from '../../src/shared/crypto/aes';
 import { deriveKeyArgon2WithSalt } from '../../src/shared/crypto/argon2';
 import { decapsulateHybrid, deriveHybridReceiverKeys, encapsulateHybrid } from '../../src/shared/crypto/hybrid-kem';
-import { combineShares, splitSecret } from '../../src/shared/crypto/shamir';
+import {
+  combineShares,
+  splitSecret,
+  formatShareHex,
+  formatShareMnemonic,
+  parseShareHex,
+  parseShareMnemonic
+} from '../../src/shared/crypto/shamir';
 import { randomBytes } from '../../src/shared/utils';
 
 const FAST_ARGON = { timeCost: 2, memoryCostMB: 1, parallelism: 1 };
@@ -65,5 +72,32 @@ describe('Shamir sharing', () => {
     const secret = randomBytes(32);
     const shares = splitSecret(secret, 2, 3);
     expect(() => combineShares(shares.slice(0, 1))).toThrow();
+  });
+
+  it('formats and parses mnemonic shares', () => {
+    const secret = randomBytes(32);
+    const share = splitSecret(secret, 2, 3)[0];
+    const formatted = formatShareMnemonic(share);
+    const parsed = parseShareMnemonic(formatted);
+    expect(parsed.id).toBe(share.id);
+    expect(Array.from(parsed.data)).toEqual(Array.from(share.data));
+  });
+
+  it('formats and parses hex shares', () => {
+    const secret = randomBytes(32);
+    const share = splitSecret(secret, 2, 3)[0];
+    const formatted = formatShareHex(share);
+    const parsed = parseShareHex(formatted);
+    expect(parsed.id).toBe(share.id);
+    expect(Array.from(parsed.data)).toEqual(Array.from(share.data));
+  });
+
+  it('rejects shares without id prefix', () => {
+    expect(() => parseShareMnemonic('abandon abandon abandon')).toThrow(/id prefix/i);
+  });
+
+  it('rejects invalid share ids', () => {
+    expect(() => parseShareHex('0: deadbeef')).toThrow(/positive integer/i);
+    expect(() => parseShareHex('abc: deadbeef')).toThrow(/id prefix/i);
   });
 });

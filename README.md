@@ -12,6 +12,13 @@ Self-contained, offline, quantum-resistant HTML vault for Ethereum seed phrases 
 - **No private keys**: Only derived EVM addresses are exposed for verification.
 - **Memory hygiene**: Sensitive byte arrays are zeroed after use; decrypted data is cleared on page close.
 
+## Usage Notes
+
+- **Passphrases are revealable** in the decrypted vault UI (hidden by default, reveal toggle with auto-hide).
+- **Derived addresses are grouped by seed + path + passphrase** in the vault UI.
+- **Shamir shares must include an embedded ID prefix** like `1: <share>`. The vault decryption UI expects this format.
+- **CSV export includes the actual passphrase** for each derived address row.
+
 ## Development
 
 ```bash

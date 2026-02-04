@@ -17,6 +17,14 @@ const setNumericInput = async (page: any, selector: string, value: string) => {
   }, [selector, value]);
 };
 
+const setNumericInputByLocator = async (locator: any, value: string) => {
+  await locator.evaluate((input: HTMLInputElement, nextValue: string) => {
+    input.value = nextValue;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }, value);
+};
+
 const generateVault = async (page: any) => {
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
   await setNumericInput(page, 'input[data-path-count]', '1');
@@ -81,12 +89,11 @@ test('shamir encryption flow', async ({ page, context }, testInfo) => {
   ]);
 
   const shareBlocks = page.locator('.share');
-  const shares = [] as { id: string; words: string }[];
+  const shares = [] as string[];
   for (let i = 0; i < 2; i += 1) {
     const share = shareBlocks.nth(i);
-    const id = (await share.getAttribute('data-share')) ?? '';
     const words = await share.locator('textarea').first().inputValue();
-    shares.push({ id, words });
+    shares.push(words);
   }
 
   const vaultPath = testInfo.outputPath('vault-shamir.html');
@@ -95,11 +102,14 @@ test('shamir encryption flow', async ({ page, context }, testInfo) => {
   const vaultPage = await context.newPage();
   await vaultPage.goto(pathToFileURL(vaultPath).toString());
 
-  const idInputs = vaultPage.locator('input[data-share-id]');
   const valueInputs = vaultPage.locator('textarea[data-share-value]');
+  await valueInputs.nth(0).fill('bad share');
+  await valueInputs.nth(1).fill(shares[1]);
+  await vaultPage.click('[data-decrypt-btn]');
+  await expect(vaultPage.locator('[data-status]')).toContainText(/id prefix/i);
+
   for (let i = 0; i < shares.length; i += 1) {
-    await idInputs.nth(i).fill(shares[i].id);
-    await valueInputs.nth(i).fill(shares[i].words);
+    await valueInputs.nth(i).fill(shares[i]);
   }
 
   await vaultPage.click('[data-decrypt-btn]');
@@ -183,4 +193,50 @@ test('password encryption flow with one seed, passphrase, and three HD paths', a
 
   await vaultPage.click('[data-derive]');
   await expect(vaultPage.locator('.derived-item code')).toHaveCount(3);
+});
+
+test('password encryption flow with 2 seeds and 2 paths each', async ({ page, context }, testInfo) => {
+  await page.goto('/');
+  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
+  await page.click('[data-add-seed]');
+
+  const mnemonics = page.locator('textarea[data-seed-mnemonic]');
+  await mnemonics.nth(1).fill(mnemonicAlt);
+
+  await page.locator('[data-add-path]').nth(0).click();
+  await page.locator('[data-add-path]').nth(1).click();
+
+  const pathValues = [
+    "m/44'/60'/0'/0/x",
+    "m/44'/60'/1'/0/x",
+    "m/44'/60'/0'/1/x",
+    "m/44'/60'/2'/0/x"
+  ];
+  const passphrases = ['seed-one-a', 'seed-one-b', 'seed-two-a', 'seed-two-b'];
+
+  const pathInputs = page.locator('input[data-path-value]');
+  for (let i = 0; i < pathValues.length; i += 1) {
+    await pathInputs.nth(i).fill(pathValues[i]);
+  }
+
+  const passInputs = page.locator('input[data-path-passphrase]');
+  for (let i = 0; i < passphrases.length; i += 1) {
+    await passInputs.nth(i).fill(passphrases[i]);
+  }
+
+  const countInputs = page.locator('input[data-path-count]');
+  const totalCounts = await countInputs.count();
+  for (let i = 0; i < totalCounts; i += 1) {
+    await setNumericInputByLocator(countInputs.nth(i), '1');
+  }
+
+  await fillPasswordFields(page);
+  const vaultPath = await downloadVault(page, testInfo, 'vault-two-seeds.html');
+  const vaultPage = await decryptVault(context, vaultPath);
+  await expect(vaultPage.locator('[data-seeds] .vault-seed')).toHaveCount(2, { timeout: 60000 });
+  await expect(vaultPage.locator('[data-seeds] .passphrase [data-reveal]')).toHaveCount(4);
+
+  await vaultPage.click('[data-derive]');
+  await expect(vaultPage.locator('.derived-item code')).toHaveCount(4);
+  await expect(vaultPage.locator('[data-derived] .passphrase [data-reveal]')).toHaveCount(4);
 });
