@@ -210,6 +210,32 @@ const clearSensitiveState = () => {
 const previewWorker = new Worker(new URL('./derivation/preview.worker.ts', import.meta.url), { type: 'module' });
 const previewTimers = new Map<string, number>();
 
+const renderPreviewTable = (addresses: string[]) => {
+  if (!addresses.length) return '';
+  return `
+    <table class="preview-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Address</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${addresses
+          .map(
+            (address, index) => `
+              <tr>
+                <td class="preview-table__index">${index}</td>
+                <td><code>${address}</code></td>
+              </tr>
+            `
+          )
+          .join('')}
+      </tbody>
+    </table>
+  `;
+};
+
 const updatePreviewUI = (seedId: string, pathId: string, path: PathForm) => {
   const preview = document.querySelector<HTMLDivElement>(`[data-preview="${seedId}:${pathId}"]`);
   if (!preview) return;
@@ -220,16 +246,7 @@ const updatePreviewUI = (seedId: string, pathId: string, path: PathForm) => {
   }
   const list = preview.querySelector<HTMLDivElement>('[data-preview-list]');
   if (list) {
-    list.innerHTML = path.previewAddresses
-      .map(
-        (address, index) => `
-          <div class="preview__item">
-            <span class="preview__index">#${index}</span>
-            <code>${address}</code>
-          </div>
-        `
-      )
-      .join('');
+    list.innerHTML = renderPreviewTable(path.previewAddresses);
   }
 };
 
@@ -479,16 +496,7 @@ const render = () => {
                                 ${path.previewMessage}
                               </p>
                               <div class="preview__list" data-preview-list>
-                                ${path.previewAddresses
-                                  .map(
-                                    (address, index) => `
-                                      <div class="preview__item">
-                                        <span class="preview__index">#${index}</span>
-                                        <code>${address}</code>
-                                      </div>
-                                    `
-                                  )
-                                  .join('')}
+                                ${renderPreviewTable(path.previewAddresses)}
                               </div>
                             </div>
                           </div>

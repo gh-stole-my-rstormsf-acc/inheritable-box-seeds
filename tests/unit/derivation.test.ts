@@ -39,7 +39,7 @@ describe('CSV export', () => {
       }
     ]);
     const lines = csv.split('\n');
-    expect(lines[0]).toBe('seed_label,hd_path,passphrase_label,address_index,address');
-    expect(lines[1]).toBe("Primary,m/44'/60'/0'/0/0,,0,0x123");
+    expect(lines[0]).toBe('seed_label,hd_path,passphrase_label,address');
+    expect(lines[1]).toBe("Primary,m/44'/60'/0'/0/0,,0x123");
   });
 });

@@ -144,6 +144,7 @@ const renderDerivedAddresses = () => {
   });
 
   let groupIndex = 0;
+  let rowNumber = 1;
   groups.forEach((group) => {
     const groupEl = document.createElement('section');
     groupEl.className = 'derived-group';
@@ -180,11 +181,13 @@ const renderDerivedAddresses = () => {
       item.className = 'derived-item';
       item.innerHTML = `
         <div>
+          <p>#${rowNumber}</p>
           <p>Index ${row.index}</p>
         </div>
         <code>${row.address}</code>
       `;
       list.appendChild(item);
+      rowNumber += 1;
     });
     groupEl.appendChild(list);
     container.appendChild(groupEl);
