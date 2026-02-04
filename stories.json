@@ -1,0 +1,316 @@
+{
+  "project": "seed-vault",
+  "description": "Self-contained, offline, quantum-resistant HTML vault for Ethereum seed phrases",
+  "stories": [
+    {
+      "id": "001",
+      "title": "Project scaffolding with Vite + TypeScript",
+      "description": "Initialize the project structure with Vite, TypeScript, Vitest, and Playwright. Set up the folder structure as defined in the PRD (src/creator, src/vault, src/shared, tests/unit, tests/e2e). Configure strict TypeScript settings. Add all dependencies from the PRD. Create placeholder entry points.",
+      "acceptance_criteria": [
+        "npm install completes without errors",
+        "npm run dev starts Vite dev server",
+        "npm run build produces dist/ output",
+        "npm run test:unit runs Vitest",
+        "npm run test:e2e runs Playwright",
+        "TypeScript compiles with strict mode enabled",
+        "Folder structure matches PRD specification"
+      ],
+      "dependencies": []
+    },
+    {
+      "id": "002",
+      "title": "Shared types and constants",
+      "description": "Create TypeScript interfaces for Vault, PasswordEncryption, ShamirEncryption, VaultData, SeedEntry, and PathConfig as defined in the PRD data schema. Add constants for supported HD paths (BIP-44, Ledger Legacy, Ledger Live), Argon2 parameter presets, and version numbers.",
+      "acceptance_criteria": [
+        "All interfaces from PRD data schema are defined in src/shared/types.ts",
+        "HD path constants include all paths from Appendix A",
+        "Argon2 parameter presets match Appendix B recommendations",
+        "Types are exported and usable across creator and vault modules",
+        "Unit tests verify type guards work correctly"
+      ],
+      "dependencies": ["001"]
+    },
+    {
+      "id": "003",
+      "title": "BIP-39 mnemonic validation",
+      "description": "Implement seed phrase validation using @scure/bip39. Support 12, 18, and 24-word phrases. Validate checksum. Normalize input (trim whitespace, lowercase). Return clear error messages for invalid mnemonics.",
+      "acceptance_criteria": [
+        "Validates 12-word mnemonics correctly",
+        "Validates 18-word mnemonics correctly",
+        "Validates 24-word mnemonics correctly",
+        "Rejects invalid checksums with clear error",
+        "Rejects non-BIP39 words with clear error",
+        "Handles mixed case input",
+        "Handles extra whitespace",
+        "Unit tests cover all validation cases"
+      ],
+      "dependencies": ["002"]
+    },
+    {
+      "id": "004",
+      "title": "HD path validation and parsing",
+      "description": "Implement HD derivation path validation. Support hardened (') and non-hardened paths. Validate format matches BIP-32 specification. Provide preset paths for BIP-44, Ledger Legacy, and Ledger Live with index placeholder.",
+      "acceptance_criteria": [
+        "Validates standard BIP-44 paths",
+        "Validates Ledger Legacy paths",
+        "Validates Ledger Live paths",
+        "Validates custom paths with correct format",
+        "Rejects malformed paths with clear error",
+        "Preset paths are selectable by name",
+        "Unit tests cover edge cases"
+      ],
+      "dependencies": ["002"]
+    },
+    {
+      "id": "005",
+      "title": "Argon2id key derivation",
+      "description": "Implement Argon2id password-based key derivation using @noble/hashes. Security-first parameters: time=4, memory=512MB, parallelism=4. Generate random salt. Return 32-byte key suitable for AES-256. Accept longer derivation times (30-85s on mobile) for maximum brute-force resistance.",
+      "acceptance_criteria": [
+        "Derives consistent key from same password + salt",
+        "Different salts produce different keys",
+        "Derivation uses time cost ≥4, memory ≥512MB",
+        "Memory usage matches configured parameter",
+        "Salt is cryptographically random (32 bytes)",
+        "Unit tests verify deterministic behavior",
+        "Progress callback for UI feedback during long derivation"
+      ],
+      "dependencies": ["002"]
+    },
+    {
+      "id": "006",
+      "title": "ML-KEM-768 + X25519 hybrid key encapsulation",
+      "description": "Implement hybrid post-quantum key encapsulation using noble-post-quantum. Generate ephemeral ML-KEM-768 keypair. Combine with X25519 for hybrid security. Output encapsulated key and shared secret.",
+      "acceptance_criteria": [
+        "Generates valid ML-KEM-768 keypair",
+        "Encapsulation produces ciphertext and shared secret",
+        "Decapsulation recovers identical shared secret",
+        "Hybrid combination with X25519 works correctly",
+        "Handles invalid ciphertexts gracefully",
+        "Unit tests verify round-trip encryption"
+      ],
+      "dependencies": ["002"]
+    },
+    {
+      "id": "007",
+      "title": "AES-256-GCM authenticated encryption",
+      "description": "Implement AES-256-GCM encryption/decryption using @noble/ciphers. Generate random 12-byte nonce. Encrypt VaultData JSON. Include authentication tag. Handle decryption failures gracefully.",
+      "acceptance_criteria": [
+        "Encrypts arbitrary JSON data",
+        "Decrypts to identical original data",
+        "Random nonce generated for each encryption",
+        "Authentication tag is verified on decryption",
+        "Tampered ciphertext fails decryption with clear error",
+        "Wrong key fails decryption with clear error",
+        "Unit tests cover success and failure cases"
+      ],
+      "dependencies": ["002"]
+    },
+    {
+      "id": "008",
+      "title": "Password encryption flow integration",
+      "description": "Integrate Argon2id, ML-KEM hybrid, and AES-GCM into complete password encryption flow. Input: password + VaultData. Output: Vault object with all encryption metadata. Implement corresponding decryption flow.",
+      "acceptance_criteria": [
+        "encrypt(password, data) returns complete Vault object",
+        "decrypt(password, vault) returns original VaultData",
+        "Vault object matches PasswordEncryption schema",
+        "Wrong password produces clear error message",
+        "Encryption metadata is correctly populated",
+        "Unit tests verify full round-trip"
+      ],
+      "dependencies": ["005", "006", "007"]
+    },
+    {
+      "id": "009",
+      "title": "Shamir secret sharing implementation",
+      "description": "Implement Shamir's Secret Sharing for k-of-n threshold encryption. Split master key into n shares where any k shares can reconstruct. Validate threshold parameters (k >= 2, n >= k, n <= 10). Format shares in BOTH BIP-39 word format AND hexadecimal for user choice.",
+      "acceptance_criteria": [
+        "Splits 32-byte secret into n shares",
+        "Any k shares reconstruct original secret",
+        "Fewer than k shares cannot reconstruct",
+        "Validates k >= 2 constraint",
+        "Validates n >= k constraint",
+        "Validates n <= 10 constraint",
+        "Shares displayed as BIP-39 mnemonic words",
+        "Shares also displayed as hexadecimal",
+        "Both formats can be used for reconstruction",
+        "Unit tests cover threshold edge cases"
+      ],
+      "dependencies": ["002"]
+    },
+    {
+      "id": "010",
+      "title": "Shamir encryption flow integration",
+      "description": "Integrate Shamir sharing with ML-KEM and AES-GCM for threshold encryption. Input: threshold config + VaultData. Output: Vault object + array of share strings. Implement corresponding decryption with share input.",
+      "acceptance_criteria": [
+        "encrypt returns Vault + share strings array",
+        "decrypt with k shares returns original VaultData",
+        "decrypt with k-1 shares fails clearly",
+        "Vault object matches ShamirEncryption schema",
+        "Share identifiers stored in vault (not shares themselves)",
+        "Unit tests verify threshold behavior"
+      ],
+      "dependencies": ["006", "007", "009"]
+    },
+    {
+      "id": "011",
+      "title": "Address derivation from seed + path",
+      "description": "Implement EVM address derivation using @scure/bip32 and @scure/bip39. Input: mnemonic + passphrase + HD path + count. Output: array of {index, address} objects. Never expose private keys. EVM chains only (Ethereum and compatible networks).",
+      "acceptance_criteria": [
+        "Derives correct addresses for BIP-44 path (m/44'/60'/0'/0/x)",
+        "Derives correct addresses for Ledger Legacy path (m/44'/60'/0'/x)",
+        "Derives correct addresses for Ledger Live path (m/44'/60'/x'/0/0)",
+        "Passphrase modifies derived addresses correctly",
+        "Empty passphrase produces standard derivation",
+        "Derives requested number of addresses",
+        "Private keys never appear in output",
+        "Addresses match reference implementations (test vectors)",
+        "Supports only EVM-compatible chains (no Bitcoin, Solana, etc.)"
+      ],
+      "dependencies": ["003", "004"]
+    },
+    {
+      "id": "012",
+      "title": "CSV export for derived addresses",
+      "description": "Generate CSV export of derived addresses. Columns: seed_label, hd_path, passphrase_hint, address_index, address. Trigger browser download. Never include private keys or actual passphrases.",
+      "acceptance_criteria": [
+        "Generates valid CSV with correct headers",
+        "Includes all derived addresses from all paths",
+        "seed_label comes from SeedEntry.label",
+        "passphrase_hint shows '[passphrase set]' or '[none]', never actual passphrase",
+        "Triggers browser file download",
+        "CSV opens correctly in Excel/Google Sheets",
+        "Unit tests verify CSV format"
+      ],
+      "dependencies": ["011"]
+    },
+    {
+      "id": "013",
+      "title": "Vault HTML template with embedded decryption",
+      "description": "Create the self-contained HTML vault template. Inline all JavaScript and CSS. Include decryption UI with password/share input. Display decrypted seeds with reveal toggle. Include address derivation and CSV export buttons.",
+      "acceptance_criteria": [
+        "Single HTML file with no external dependencies",
+        "File size under 2000KB (2MB)",
+        "Password input with hint display",
+        "Shamir share input (multiple fields based on threshold)",
+        "Decrypted data displays with reveal toggle",
+        "Seeds hidden by default",
+        "Auto-hide after 30 seconds",
+        "Derive addresses button functional",
+        "Export CSV button functional",
+        "Works offline (no network requests)"
+      ],
+      "dependencies": ["008", "010", "011", "012"]
+    },
+    {
+      "id": "014",
+      "title": "Creator app - seed entry form",
+      "description": "Build the creator UI for entering seed phrases. Support adding multiple seeds with labels. Validate mnemonics on input. Show validation status. Allow removing seeds.",
+      "acceptance_criteria": [
+        "Add seed form with label and mnemonic fields",
+        "Real-time mnemonic validation feedback",
+        "Support 12/18/24 word detection",
+        "Add multiple seeds with unique labels",
+        "Remove seed button for each entry",
+        "Clear error states on valid input",
+        "Mobile-responsive layout"
+      ],
+      "dependencies": ["003"]
+    },
+    {
+      "id": "015",
+      "title": "Creator app - HD path configuration",
+      "description": "Build UI for configuring HD paths per seed. Preset dropdown for BIP-44/Ledger Legacy/Ledger Live. Custom path input option. Optional passphrase field per path. Address count selector (1-100).",
+      "acceptance_criteria": [
+        "Preset dropdown with 3 standard options",
+        "Custom path input with validation",
+        "Optional passphrase input per path",
+        "Address count input with validation (1-100)",
+        "Add multiple paths per seed",
+        "Remove path button",
+        "Path labels for identification",
+        "Mobile-responsive layout"
+      ],
+      "dependencies": ["004", "014"]
+    },
+    {
+      "id": "016",
+      "title": "Creator app - encryption options",
+      "description": "Build UI for selecting encryption mode. Password mode: password input with confirmation + optional hint. Shamir mode: threshold selector (k-of-n). Show security implications of each choice.",
+      "acceptance_criteria": [
+        "Toggle between Password and Shamir modes",
+        "Password mode: password + confirmation fields",
+        "Password mode: optional hint field",
+        "Password strength indicator",
+        "Shamir mode: k selector (2-10)",
+        "Shamir mode: n selector (k to 10)",
+        "Clear explanation of each mode",
+        "Mobile-responsive layout"
+      ],
+      "dependencies": ["002"]
+    },
+    {
+      "id": "017",
+      "title": "Creator app - vault generation and download",
+      "description": "Implement vault generation flow. Collect all form data. Encrypt with selected mode. Generate self-contained HTML. Trigger download. For Shamir: display shares for user to record.",
+      "acceptance_criteria": [
+        "Generate button validates all inputs",
+        "Shows progress during encryption",
+        "Generates valid vault HTML file",
+        "Triggers browser download of .html file",
+        "Shamir mode: displays shares in BOTH BIP-39 words AND hex format",
+        "Shamir mode: user can toggle between word/hex display",
+        "Shamir mode: warns user to record shares securely",
+        "Clears sensitive data from memory after generation",
+        "Success confirmation message"
+      ],
+      "dependencies": ["008", "010", "013", "014", "015", "016"]
+    },
+    {
+      "id": "018",
+      "title": "E2E tests - full workflow",
+      "description": "Write Playwright E2E tests covering complete workflows. Test password encryption round-trip. Test Shamir encryption round-trip. Test across Chrome, Firefox, Safari, Edge. Test mobile viewport.",
+      "acceptance_criteria": [
+        "Test: create vault with password, decrypt, verify data",
+        "Test: create vault with Shamir 2-of-3, decrypt with 2 shares",
+        "Test: Shamir fails with 1 share",
+        "Test: wrong password shows error",
+        "Test: derive addresses and verify format",
+        "Test: export CSV and verify contents",
+        "Tests pass on Chrome, Firefox, Safari, Edge",
+        "Tests pass on mobile viewport (375px)"
+      ],
+      "dependencies": ["017"]
+    },
+    {
+      "id": "019",
+      "title": "UI polish - family-friendly design",
+      "description": "Apply visual design polish. Soft color palette (no dark hacker aesthetic). Clear typography. Friendly iconography. Smooth animations for reveals. Loading states. Empty states.",
+      "acceptance_criteria": [
+        "Color palette is soft and approachable",
+        "Typography is clear and readable",
+        "Icons are friendly, not intimidating",
+        "Reveal animation is smooth",
+        "Loading spinner during encryption",
+        "Empty states guide user action",
+        "Consistent spacing and alignment",
+        "Lighthouse accessibility score >= 90"
+      ],
+      "dependencies": ["017"]
+    },
+    {
+      "id": "020",
+      "title": "Security hardening and memory clearing",
+      "description": "Implement security best practices. Clear sensitive data from memory after use. Add CSP headers blocking all network requests. Audit for potential leaks. Add security documentation.",
+      "acceptance_criteria": [
+        "Passwords cleared from memory after key derivation",
+        "Seed phrases cleared after encryption",
+        "Decrypted data cleared on page close",
+        "CSP blocks all external requests",
+        "No sensitive data in console logs",
+        "No sensitive data in error messages",
+        "Security model documented in README"
+      ],
+      "dependencies": ["017"]
+    }
+  ]
+}
