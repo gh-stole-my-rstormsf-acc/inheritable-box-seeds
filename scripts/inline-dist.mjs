@@ -5,15 +5,16 @@ const distDir = resolve('dist');
 const indexPath = resolve(distDir, 'index.html');
 
 const html = await readFile(indexPath, 'utf8');
-const cssMatch = html.match(/<link[^>]+href="(\/assets\/[^\"]+\.css)"[^>]*>/);
-const jsMatch = html.match(/<script[^>]+src="(\/assets\/[^\"]+\.js)"[^>]*><\/script>/);
+const cssMatch = html.match(/<link[^>]+href="([^\"]+assets\/[^\"]+\.css)"[^>]*>/);
+const jsMatch = html.match(/<script[^>]+src="([^\"]+assets\/[^\"]+\.js)"[^>]*><\/script>/);
 
 if (!cssMatch || !jsMatch) {
   throw new Error('Could not locate CSS/JS assets to inline.');
 }
 
-const cssPath = resolve(distDir, cssMatch[1].replace(/^\//, ''));
-const jsPath = resolve(distDir, jsMatch[1].replace(/^\//, ''));
+const normalizeAssetPath = (assetPath) => assetPath.replace(/^.*?(assets\/)/, '$1');
+const cssPath = resolve(distDir, normalizeAssetPath(cssMatch[1]));
+const jsPath = resolve(distDir, normalizeAssetPath(jsMatch[1]));
 
 const [css, js] = await Promise.all([
   readFile(cssPath, 'utf8'),
