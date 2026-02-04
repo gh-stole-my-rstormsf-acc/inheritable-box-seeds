@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile, readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 const distDir = resolve('dist');
@@ -21,9 +21,20 @@ const [css, js] = await Promise.all([
   readFile(jsPath, 'utf8')
 ]);
 
+const assetsDir = resolve(distDir, 'assets');
+const assetFiles = await readdir(assetsDir);
+let inlinedJs = js;
+for (const file of assetFiles) {
+  if (!file.includes('.worker-') || !file.endsWith('.js')) continue;
+  inlinedJs = inlinedJs.replaceAll(
+    `new URL("${file}",import.meta.url)`,
+    `new URL("./assets/${file}",import.meta.url)`
+  );
+}
+
 const inlined = html
   .replace(cssMatch[0], `<style>${css}</style>`)
-  .replace(jsMatch[0], `<script>${js}</script>`);
+  .replace(jsMatch[0], `<script type="module">${inlinedJs}</script>`);
 
 const outPath = resolve(distDir, 'seed-vault.html');
 await writeFile(outPath, inlined, 'utf8');
