@@ -122,10 +122,13 @@ test('password encryption flow with multiple seeds', async ({ page, context }, t
   await page.click('[data-add-seed]');
   const mnemonics = page.locator('textarea[data-seed-mnemonic]');
   await mnemonics.nth(1).fill(mnemonicAlt);
+  const seedLabels = page.locator('input[data-seed-label]');
+  await seedLabels.nth(0).fill('Seed One');
+  await seedLabels.nth(1).fill('Seed Two');
   const counts = page.locator('input[data-path-count]');
-  await setNumericInput(page, 'input[data-path-count]', '1');
-  if (await counts.count() > 1) {
-    await setNumericInput(page, 'input[data-path-count]:nth-of-type(2)', '1');
+  const totalCounts = await counts.count();
+  for (let i = 0; i < totalCounts; i += 1) {
+    await setNumericInputByLocator(counts.nth(i), '1');
   }
   await fillPasswordFields(page);
 
@@ -151,7 +154,7 @@ test('password encryption flow with one seed and three passphrases', async ({ pa
   const counts = page.locator('input[data-path-count]');
   const total = await counts.count();
   for (let i = 0; i < total; i += 1) {
-    await setNumericInput(page, `input[data-path-count]:nth-of-type(${i + 1})`, '1');
+    await setNumericInputByLocator(counts.nth(i), '1');
   }
 
   await fillPasswordFields(page);
@@ -183,7 +186,7 @@ test('password encryption flow with one seed, passphrase, and three HD paths', a
   const counts = page.locator('input[data-path-count]');
   const total = await counts.count();
   for (let i = 0; i < total; i += 1) {
-    await setNumericInput(page, `input[data-path-count]:nth-of-type(${i + 1})`, '1');
+    await setNumericInputByLocator(counts.nth(i), '1');
   }
 
   await fillPasswordFields(page);
@@ -202,6 +205,9 @@ test('password encryption flow with 2 seeds and 2 paths each', async ({ page, co
 
   const mnemonics = page.locator('textarea[data-seed-mnemonic]');
   await mnemonics.nth(1).fill(mnemonicAlt);
+  const seedLabels = page.locator('input[data-seed-label]');
+  await seedLabels.nth(0).fill('Seed One');
+  await seedLabels.nth(1).fill('Seed Two');
 
   await page.locator('[data-add-path]').nth(0).click();
   await page.locator('[data-add-path]').nth(1).click();
