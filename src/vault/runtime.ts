@@ -18,7 +18,14 @@ if (!root) {
 
 const state: {
   decrypted?: VaultData;
-  derivedRows?: Array<{ seedLabel: string; path: string; passphrase: string; index: number; address: string }>;
+  derivedRows?: Array<{
+    seedLabel: string;
+    path: string;
+    passphrase: string;
+    passphraseLabel: string;
+    index: number;
+    address: string;
+  }>;
 } = {};
 
 const setStatus = (message: string, tone: 'info' | 'error' = 'info') => {
@@ -74,6 +81,7 @@ const renderSeedList = (data: VaultData) => {
       const pathEl = document.createElement('div');
       pathEl.className = 'path';
       const passphraseId = `seed-${seedIndex}-path-${pathIndex}-passphrase`;
+      const passphraseLabel = pathConfig.passphraseLabel?.trim();
       const passphraseMarkup = pathConfig.passphrase
         ? `
             <div class="passphrase">
@@ -81,6 +89,7 @@ const renderSeedList = (data: VaultData) => {
                 <span>Passphrase</span>
                 <button data-reveal="${passphraseId}">Reveal</button>
               </div>
+              <p class="passphrase__label">${passphraseLabel || '[unlabeled]'}</p>
               <p class="secret secret--compact" id="${passphraseId}" data-hidden="true">${pathConfig.passphrase}</p>
             </div>
           `
@@ -114,14 +123,23 @@ const renderDerivedAddresses = () => {
     return;
   }
 
-  const groups = new Map<string, { seedLabel: string; path: string; passphrase: string; rows: typeof rows }>();
+  const groups = new Map<
+    string,
+    { seedLabel: string; path: string; passphrase: string; passphraseLabel: string; rows: typeof rows }
+  >();
   rows.forEach((row) => {
-    const key = `${row.seedLabel}::${row.path}::${row.passphrase}`;
+    const key = `${row.seedLabel}::${row.path}::${row.passphrase}::${row.passphraseLabel}`;
     const existing = groups.get(key);
     if (existing) {
       existing.rows.push(row);
     } else {
-      groups.set(key, { seedLabel: row.seedLabel, path: row.path, passphrase: row.passphrase, rows: [row] });
+      groups.set(key, {
+        seedLabel: row.seedLabel,
+        path: row.path,
+        passphrase: row.passphrase,
+        passphraseLabel: row.passphraseLabel,
+        rows: [row]
+      });
     }
   });
 
@@ -130,6 +148,7 @@ const renderDerivedAddresses = () => {
     const groupEl = document.createElement('section');
     groupEl.className = 'derived-group';
     const passphraseId = `derived-passphrase-${groupIndex}`;
+    const passphraseLabel = group.passphraseLabel?.trim();
     const passphraseMarkup = group.passphrase
       ? `
           <div class="passphrase">
@@ -137,6 +156,7 @@ const renderDerivedAddresses = () => {
               <span>Passphrase</span>
               <button data-reveal="${passphraseId}">Reveal</button>
             </div>
+            <p class="passphrase__label">${passphraseLabel || '[unlabeled]'}</p>
             <p class="secret secret--compact" id="${passphraseId}" data-hidden="true">${group.passphrase}</p>
           </div>
         `
@@ -176,7 +196,14 @@ const renderDerivedAddresses = () => {
 
 const handleDeriveAddresses = () => {
   if (!state.decrypted) return;
-  const rows: Array<{ seedLabel: string; path: string; passphrase: string; index: number; address: string }> = [];
+  const rows: Array<{
+    seedLabel: string;
+    path: string;
+    passphrase: string;
+    passphraseLabel: string;
+    index: number;
+    address: string;
+  }> = [];
   state.decrypted.seeds.forEach((seed) => {
     seed.paths.forEach((pathConfig) => {
       const derived = deriveEvmAddresses(
@@ -190,6 +217,7 @@ const handleDeriveAddresses = () => {
           seedLabel: seed.label,
           path: address.path,
           passphrase: pathConfig.passphrase,
+          passphraseLabel: pathConfig.passphrase ? pathConfig.passphraseLabel ?? '' : '',
           index: address.index,
           address: address.address
         });

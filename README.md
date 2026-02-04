@@ -17,7 +17,8 @@ Self-contained, offline, quantum-resistant HTML vault for Ethereum seed phrases 
 - **Passphrases are revealable** in the decrypted vault UI (hidden by default, reveal toggle with auto-hide).
 - **Derived addresses are grouped by seed + path + passphrase** in the vault UI.
 - **Shamir shares must include an embedded ID prefix** like `1: <share>`. The vault decryption UI expects this format.
-- **CSV export includes the actual passphrase** for each derived address row.
+- **Passphrase labels are required** when a passphrase is set and are shown alongside passphrases in the vault UI.
+- **CSV export includes the passphrase label only** (not the passphrase value).
 
 ## Development
 

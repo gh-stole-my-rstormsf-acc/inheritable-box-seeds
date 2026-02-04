@@ -29,6 +29,7 @@ const STYLE = `
   .passphrase { display: flex; flex-direction: column; gap: 6px; }
   .passphrase__header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .passphrase__header button { padding: 4px 10px; border-radius: 8px; border: 1px solid #d8d2c6; background: #f7f3ec; cursor: pointer; }
+  .passphrase__label { margin: 0; font-size: 0.85rem; color: #5c5242; }
   .path { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px dashed #eee; }
   .path:last-child { border-bottom: none; }
   .meta { display: flex; flex-direction: column; gap: 4px; color: #555; font-size: 0.9rem; }

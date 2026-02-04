@@ -235,6 +235,18 @@ textarea {
   margin-top: 8px;
 }
 
+.preview__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.preview__index {
+  font-weight: 600;
+  color: #6c5f4b;
+  min-width: 32px;
+}
+
 .preview__list code {
   display: block;
   font-family: "Courier New", monospace;

@@ -49,6 +49,7 @@ export interface PathConfig {
   label: string;
   path: string;
   passphrase: string;
+  passphraseLabel: string;
   deriveCount: number;
 }
 

@@ -1,7 +1,7 @@
 export interface CsvAddressRow {
   seedLabel: string;
   path: string;
-  passphrase: string;
+  passphraseLabel: string;
   index: number;
   address: string;
 }
@@ -15,13 +15,13 @@ const escapeCsv = (value: string | number) => {
 };
 
 export const buildAddressCsv = (rows: CsvAddressRow[]) => {
-  const header = ['seed_label', 'hd_path', 'passphrase', 'address_index', 'address'];
+  const header = ['seed_label', 'hd_path', 'passphrase_label', 'address_index', 'address'];
   const lines = [header.map(escapeCsv).join(',')];
   for (const row of rows) {
     lines.push([
       escapeCsv(row.seedLabel),
       escapeCsv(row.path),
-      escapeCsv(row.passphrase),
+      escapeCsv(row.passphraseLabel),
       escapeCsv(row.index),
       escapeCsv(row.address)
     ].join(','));

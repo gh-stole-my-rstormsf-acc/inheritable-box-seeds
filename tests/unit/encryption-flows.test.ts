@@ -13,6 +13,7 @@ const sampleData: VaultData = {
           label: 'BIP-44',
           path: "m/44'/60'/0'/0/0",
           passphrase: '',
+          passphraseLabel: '',
           deriveCount: 1
         }
       ]

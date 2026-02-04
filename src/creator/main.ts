@@ -14,6 +14,7 @@ interface PathForm {
   preset: string;
   path: string;
   passphrase: string;
+  passphraseLabel: string;
   deriveCount: number;
   previewStatus: 'idle' | 'computing' | 'error' | 'ready';
   previewMessage: string;
@@ -54,6 +55,7 @@ const createPath = (preset = HD_PATH_PRESETS[0]) => ({
   preset: preset.id,
   path: preset.path,
   passphrase: '',
+  passphraseLabel: '',
   deriveCount: 10,
   previewStatus: 'idle',
   previewMessage: 'Enter a valid mnemonic and path to preview.',
@@ -141,6 +143,9 @@ const validateForm = () => {
       if (!path.label.trim()) {
         errors.push('Path labels are required.');
       }
+      if (path.passphrase.trim() && !path.passphraseLabel.trim()) {
+        errors.push(`Path "${path.label}" passphrase label is required when a passphrase is set.`);
+      }
       const pathResult = validateHdPathTemplate(path.path);
       if (!pathResult.valid) {
         errors.push(`Path "${path.label}": ${pathResult.error}`);
@@ -181,6 +186,7 @@ const buildVaultData = (): VaultData => ({
       label: path.label.trim(),
       path: path.path.trim(),
       passphrase: path.passphrase,
+      passphraseLabel: path.passphrase ? path.passphraseLabel.trim() : '',
       deriveCount: path.deriveCount
     }))
   }))
@@ -192,7 +198,8 @@ const clearSensitiveState = () => {
     mnemonic: '',
     paths: seed.paths.map((path) => ({
       ...path,
-      passphrase: ''
+      passphrase: '',
+      passphraseLabel: ''
     }))
   }));
   state.encryption.password = '';
@@ -213,7 +220,16 @@ const updatePreviewUI = (seedId: string, pathId: string, path: PathForm) => {
   }
   const list = preview.querySelector<HTMLDivElement>('[data-preview-list]');
   if (list) {
-    list.innerHTML = path.previewAddresses.map((address) => `<code>${address}</code>`).join('');
+    list.innerHTML = path.previewAddresses
+      .map(
+        (address, index) => `
+          <div class="preview__item">
+            <span class="preview__index">#${index}</span>
+            <code>${address}</code>
+          </div>
+        `
+      )
+      .join('');
   }
 };
 
@@ -449,6 +465,13 @@ const render = () => {
                             </p>
                             <label>Passphrase (optional)</label>
                             <input type="text" data-path-passphrase="${seed.id}:${path.id}" value="${path.passphrase}" />
+                            <label>Passphrase Label</label>
+                            <input
+                              type="text"
+                              data-path-passphrase-label="${seed.id}:${path.id}"
+                              value="${path.passphraseLabel}"
+                              placeholder="Required if passphrase is set"
+                            />
                             <label>Address Count</label>
                             <input type="number" min="1" max="100" data-path-count="${seed.id}:${path.id}" value="${path.deriveCount}" />
                             <div class="preview" data-preview="${seed.id}:${path.id}">
@@ -456,7 +479,16 @@ const render = () => {
                                 ${path.previewMessage}
                               </p>
                               <div class="preview__list" data-preview-list>
-                                ${path.previewAddresses.map((address) => `<code>${address}</code>`).join('')}
+                                ${path.previewAddresses
+                                  .map(
+                                    (address, index) => `
+                                      <div class="preview__item">
+                                        <span class="preview__index">#${index}</span>
+                                        <code>${address}</code>
+                                      </div>
+                                    `
+                                  )
+                                  .join('')}
                               </div>
                             </div>
                           </div>
@@ -689,6 +721,17 @@ const render = () => {
       if (path) {
         path.passphrase = input.value;
         schedulePreview(seed!, path);
+      }
+    });
+  });
+
+  root.querySelectorAll<HTMLInputElement>('[data-path-passphrase-label]').forEach((input) => {
+    input.addEventListener('input', () => {
+      const [seedId, pathId] = (input.dataset.pathPassphraseLabel ?? '').split(':');
+      const seed = state.seeds.find((s) => s.id === seedId);
+      const path = seed?.paths.find((p) => p.id === pathId);
+      if (path) {
+        path.passphraseLabel = input.value;
       }
     });
   });

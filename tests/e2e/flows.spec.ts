@@ -150,6 +150,10 @@ test('password encryption flow with one seed and three passphrases', async ({ pa
   await passphrases.nth(0).fill('passphrase-one');
   await passphrases.nth(1).fill('passphrase-two');
   await passphrases.nth(2).fill('passphrase-three');
+  const passphraseLabels = page.locator('input[data-path-passphrase-label]');
+  await passphraseLabels.nth(0).fill('Label One');
+  await passphraseLabels.nth(1).fill('Label Two');
+  await passphraseLabels.nth(2).fill('Label Three');
 
   const counts = page.locator('input[data-path-count]');
   const total = await counts.count();
@@ -182,6 +186,10 @@ test('password encryption flow with one seed, passphrase, and three HD paths', a
   await passphrases.nth(0).fill(passphrase);
   await passphrases.nth(1).fill(passphrase);
   await passphrases.nth(2).fill(passphrase);
+  const passphraseLabels = page.locator('input[data-path-passphrase-label]');
+  await passphraseLabels.nth(0).fill('Main');
+  await passphraseLabels.nth(1).fill('Savings');
+  await passphraseLabels.nth(2).fill('Backup');
 
   const counts = page.locator('input[data-path-count]');
   const total = await counts.count();
@@ -228,6 +236,11 @@ test('password encryption flow with 2 seeds and 2 paths each', async ({ page, co
   const passInputs = page.locator('input[data-path-passphrase]');
   for (let i = 0; i < passphrases.length; i += 1) {
     await passInputs.nth(i).fill(passphrases[i]);
+  }
+  const passphraseLabels = ['Seed One A', 'Seed One B', 'Seed Two A', 'Seed Two B'];
+  const labelInputs = page.locator('input[data-path-passphrase-label]');
+  for (let i = 0; i < passphraseLabels.length; i += 1) {
+    await labelInputs.nth(i).fill(passphraseLabels[i]);
   }
 
   const countInputs = page.locator('input[data-path-count]');

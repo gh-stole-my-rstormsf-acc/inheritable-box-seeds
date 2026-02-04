@@ -33,13 +33,13 @@ describe('CSV export', () => {
       {
         seedLabel: 'Primary',
         path: "m/44'/60'/0'/0/0",
-        passphrase: '',
+        passphraseLabel: '',
         index: 0,
         address: '0x123'
       }
     ]);
     const lines = csv.split('\n');
-    expect(lines[0]).toBe('seed_label,hd_path,passphrase,address_index,address');
+    expect(lines[0]).toBe('seed_label,hd_path,passphrase_label,address_index,address');
     expect(lines[1]).toBe("Primary,m/44'/60'/0'/0/0,,0,0x123");
   });
 });
