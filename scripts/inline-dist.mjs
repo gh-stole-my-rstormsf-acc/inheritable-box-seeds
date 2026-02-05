@@ -38,6 +38,5 @@ const inlined = html
 
 const outPath = resolve(distDir, 'seed-vault.html');
 await writeFile(outPath, inlined, 'utf8');
-await writeFile(indexPath, inlined, 'utf8');
 
 console.log(`Inlined assets into ${outPath}`);

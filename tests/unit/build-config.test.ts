@@ -26,14 +26,30 @@ const getCspTokens = (html: string) => {
 };
 
 describe('build config', () => {
+  const getTransform = (config: any) => {
+    if (typeof config.transformIndexHtml === 'function') {
+      return config.transformIndexHtml as (html: string) => string;
+    }
+    const plugin = (config.plugins ?? []).find((candidate: any) => typeof candidate?.transformIndexHtml === 'function');
+    if (!plugin) {
+      throw new Error('Missing CSP transform plugin.');
+    }
+    return plugin.transformIndexHtml as (html: string) => string;
+  };
+
   it('uses relative base for GitHub Pages', () => {
     const config = getConfig('build');
     expect(config.base).toBe('./');
   });
 
+  it('disables modulepreload polyfill to avoid inline CSP', () => {
+    const config = getConfig('build');
+    expect(config.build?.modulePreload?.polyfill).toBe(false);
+  });
+
   it('drops unsafe-eval in production CSP', () => {
     const config = getConfig('build');
-    const transform = config.transformIndexHtml as (html: string) => string;
+    const transform = getTransform(config);
     const output = transform(sampleHtml);
     const tokens = getCspTokens(output);
     expect(tokens).toContain("'wasm-unsafe-eval'");
@@ -42,7 +58,7 @@ describe('build config', () => {
 
   it('keeps unsafe-eval in dev CSP for HMR', () => {
     const config = getConfig('serve');
-    const transform = config.transformIndexHtml as (html: string) => string;
+    const transform = getTransform(config);
     const output = transform(sampleHtml);
     const tokens = getCspTokens(output);
     expect(tokens).toContain("'unsafe-eval'");

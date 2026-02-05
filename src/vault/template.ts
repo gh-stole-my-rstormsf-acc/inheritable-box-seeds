@@ -74,7 +74,6 @@ export const buildVaultHtml = (vault: Vault) => {
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none';" />
     <meta http-equiv="X-Content-Type-Options" content="nosniff" />
     <meta http-equiv="Referrer-Policy" content="no-referrer" />
-    <meta http-equiv="X-Frame-Options" content="DENY" />
     <title>Seed Vault</title>
     <style>${STYLE}</style>
   </head>

@@ -14,13 +14,21 @@ const replaceCsp = (html: string, content: string) =>
 export default defineConfig(({ command }) => ({
   base: command === 'build' ? './' : '/',
   assetsInclude: ['**/*.wasm', '**/*.wasm?inline'],
-  transformIndexHtml(html) {
-    const csp = command === 'serve' ? DEV_CSP : PROD_CSP;
-    return replaceCsp(html, csp);
-  },
+  plugins: [
+    {
+      name: 'csp-transform',
+      transformIndexHtml(html) {
+        const csp = command === 'serve' ? DEV_CSP : PROD_CSP;
+        return replaceCsp(html, csp);
+      }
+    }
+  ],
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    modulePreload: {
+      polyfill: false
+    },
     rollupOptions: {
       inlineDynamicImports: true,
       output: {
