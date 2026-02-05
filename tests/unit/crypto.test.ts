@@ -97,7 +97,7 @@ describe('Shamir sharing', () => {
   });
 
   it('rejects invalid share ids', () => {
-    expect(() => parseShareHex('0: deadbeef')).toThrow(/positive integer/i);
+    expect(() => parseShareHex('0: deadbeef')).toThrow(/integer between 1 and 255/i);
     expect(() => parseShareHex('abc: deadbeef')).toThrow(/id prefix/i);
   });
 });

@@ -25,7 +25,7 @@ const assetsDir = resolve(distDir, 'assets');
 const assetFiles = await readdir(assetsDir);
 let inlinedJs = js;
 for (const file of assetFiles) {
-  if (!file.includes('.worker-') || !file.endsWith('.js')) continue;
+  if (!file.includes('.worker') || !file.endsWith('.js')) continue;
   inlinedJs = inlinedJs.replaceAll(
     `new URL("${file}",import.meta.url)`,
     `new URL("./assets/${file}",import.meta.url)`

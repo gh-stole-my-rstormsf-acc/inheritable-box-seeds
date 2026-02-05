@@ -36,7 +36,7 @@ const shamirEncryption: ShamirEncryption = {
 };
 
 const vault: Vault = {
-  version: 1,
+  version: 2,
   created: new Date().toISOString(),
   hint: 'hint',
   encryption: passwordEncryption,
@@ -56,6 +56,7 @@ describe('type guards', () => {
 
   it('detects vault', () => {
     expect(isVault(vault)).toBe(true);
-    expect(isVault({ ...vault, version: 2 })).toBe(false);
+    expect(isVault({ ...vault, version: 1 })).toBe(true);
+    expect(isVault({ ...vault, version: 3 } as Vault)).toBe(false);
   });
 });

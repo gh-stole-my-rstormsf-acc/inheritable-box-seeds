@@ -47,6 +47,52 @@ export interface ShamirDecryptOptions {
 const serializeVaultData = (data: VaultData) => utf8ToBytes(JSON.stringify(data));
 const deserializeVaultData = (bytes: Uint8Array): VaultData => JSON.parse(bytesToUtf8(bytes)) as VaultData;
 
+const buildPasswordAad = (input: {
+  version: number;
+  created: string;
+  hint?: string;
+  argon2: PasswordEncryption['argon2'];
+  mlkem: PasswordEncryption['mlkem'];
+}) =>
+  utf8ToBytes(
+    JSON.stringify({
+      version: input.version,
+      created: input.created,
+      hint: input.hint,
+      encryption: {
+        type: 'password',
+        algorithm: ENCRYPTION_ALGORITHM_PASSWORD,
+        argon2: input.argon2,
+        mlkem: input.mlkem
+      }
+    })
+  );
+
+const buildShamirAad = (input: {
+  version: number;
+  created: string;
+  hint?: string;
+  threshold: number;
+  totalShares: number;
+  shareIdentifiers: string[];
+  mlkem: ShamirEncryption['mlkem'];
+}) =>
+  utf8ToBytes(
+    JSON.stringify({
+      version: input.version,
+      created: input.created,
+      hint: input.hint,
+      encryption: {
+        type: 'shamir',
+        algorithm: ENCRYPTION_ALGORITHM_SHAMIR,
+        threshold: input.threshold,
+        totalShares: input.totalShares,
+        shareIdentifiers: input.shareIdentifiers,
+        mlkem: input.mlkem
+      }
+    })
+  );
+
 export const encryptWithPassword = async ({
   password,
   data,
@@ -67,7 +113,21 @@ export const encryptWithPassword = async ({
   const { key, salt, params: usedParams } = await kdfFn(params);
   const receiverKeys = deriveHybridReceiverKeys(key);
   const { encapsulatedKey, sharedSecret } = encapsulateHybrid(receiverKeys);
-  const { ciphertext, nonce } = encryptAesGcm(sharedSecret, payloadBytes);
+  const created = new Date().toISOString();
+  const argon2Params = {
+    salt: bytesToBase64(salt),
+    timeCost: usedParams.timeCost,
+    memoryCost: usedParams.memoryCostMB,
+    parallelism: usedParams.parallelism
+  };
+  const aad = buildPasswordAad({
+    version: VAULT_VERSION,
+    created,
+    hint,
+    argon2: argon2Params,
+    mlkem: { encapsulatedKey: bytesToBase64(encapsulatedKey) }
+  });
+  const { ciphertext, nonce } = encryptAesGcm(sharedSecret, payloadBytes, aad);
 
   zeroBytes(payloadBytes);
   zeroBytes(key);
@@ -76,12 +136,7 @@ export const encryptWithPassword = async ({
   const encryption: PasswordEncryption = {
     type: 'password',
     algorithm: ENCRYPTION_ALGORITHM_PASSWORD,
-    argon2: {
-      salt: bytesToBase64(salt),
-      timeCost: usedParams.timeCost,
-      memoryCost: usedParams.memoryCostMB,
-      parallelism: usedParams.parallelism
-    },
+    argon2: argon2Params,
     mlkem: {
       encapsulatedKey: bytesToBase64(encapsulatedKey)
     },
@@ -90,7 +145,7 @@ export const encryptWithPassword = async ({
 
   return {
     version: VAULT_VERSION,
-    created: new Date().toISOString(),
+    created,
     hint,
     encryption,
     payload: bytesToBase64(ciphertext)
@@ -122,9 +177,23 @@ export const decryptWithPassword = async ({
   const encapsulatedKey = base64ToBytes(mlkem.encapsulatedKey);
   const sharedSecret = decapsulateHybrid(receiverKeys, encapsulatedKey);
   const ciphertext = base64ToBytes(vault.payload);
+  const aad =
+    vault.version >= 2
+      ? buildPasswordAad({
+          version: vault.version,
+          created: vault.created,
+          hint: vault.hint,
+          argon2,
+          mlkem
+        })
+      : undefined;
   try {
-    const plaintext = decryptAesGcm(sharedSecret, ciphertext, base64ToBytes(nonce));
-    return deserializeVaultData(plaintext);
+    const plaintext = decryptAesGcm(sharedSecret, ciphertext, base64ToBytes(nonce), aad);
+    try {
+      return deserializeVaultData(plaintext);
+    } finally {
+      zeroBytes(plaintext);
+    }
   } catch {
     throw new Error('Decryption failed. Check your password and try again.');
   } finally {
@@ -143,8 +212,19 @@ export const encryptWithShamir = ({
   const masterSeed = randomBytes(32);
   const receiverKeys = deriveHybridReceiverKeys(masterSeed);
   const { encapsulatedKey, sharedSecret } = encapsulateHybrid(receiverKeys);
-  const { ciphertext, nonce } = encryptAesGcm(sharedSecret, payloadBytes);
+  const created = new Date().toISOString();
   const shares = splitSecret(masterSeed, threshold, totalShares);
+  const shareIdentifiers = shares.map((share) => `share-${share.id}`);
+  const aad = buildShamirAad({
+    version: VAULT_VERSION,
+    created,
+    hint,
+    threshold,
+    totalShares,
+    shareIdentifiers,
+    mlkem: { encapsulatedKey: bytesToBase64(encapsulatedKey) }
+  });
+  const { ciphertext, nonce } = encryptAesGcm(sharedSecret, payloadBytes, aad);
 
   zeroBytes(payloadBytes);
   zeroBytes(sharedSecret);
@@ -155,7 +235,7 @@ export const encryptWithShamir = ({
     algorithm: ENCRYPTION_ALGORITHM_SHAMIR,
     threshold,
     totalShares,
-    shareIdentifiers: shares.map((share) => `share-${share.id}`),
+    shareIdentifiers,
     mlkem: {
       encapsulatedKey: bytesToBase64(encapsulatedKey)
     },
@@ -165,7 +245,7 @@ export const encryptWithShamir = ({
   return {
     vault: {
       version: VAULT_VERSION,
-      created: new Date().toISOString(),
+      created,
       hint,
       encryption,
       payload: bytesToBase64(ciphertext)
@@ -186,9 +266,25 @@ export const decryptWithShamir = ({ shares, vault }: ShamirDecryptOptions): Vaul
   const encapsulatedKey = base64ToBytes(vault.encryption.mlkem.encapsulatedKey);
   const sharedSecret = decapsulateHybrid(receiverKeys, encapsulatedKey);
   const ciphertext = base64ToBytes(vault.payload);
+  const aad =
+    vault.version >= 2
+      ? buildShamirAad({
+          version: vault.version,
+          created: vault.created,
+          hint: vault.hint,
+          threshold: vault.encryption.threshold,
+          totalShares: vault.encryption.totalShares,
+          shareIdentifiers: vault.encryption.shareIdentifiers,
+          mlkem: vault.encryption.mlkem
+        })
+      : undefined;
   try {
-    const plaintext = decryptAesGcm(sharedSecret, ciphertext, base64ToBytes(vault.encryption.nonce));
-    return deserializeVaultData(plaintext);
+    const plaintext = decryptAesGcm(sharedSecret, ciphertext, base64ToBytes(vault.encryption.nonce), aad);
+    try {
+      return deserializeVaultData(plaintext);
+    } finally {
+      zeroBytes(plaintext);
+    }
   } catch {
     throw new Error('Decryption failed. Check your shares and try again.');
   } finally {

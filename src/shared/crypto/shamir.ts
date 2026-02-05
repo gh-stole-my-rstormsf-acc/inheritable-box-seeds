@@ -8,6 +8,8 @@ export interface ShamirShare {
   data: Uint8Array;
 }
 
+const SHARE_BYTES = 32;
+
 const EXP = new Uint8Array(512);
 const LOG = new Uint8Array(256);
 
@@ -96,7 +98,13 @@ export const combineShares = (shares: ShamirShare[]): Uint8Array => {
     throw new Error('At least two shares are required.');
   }
   const length = shares[0].data.length;
+  if (length !== SHARE_BYTES) {
+    throw new Error('Share length is invalid.');
+  }
   shares.forEach((share) => {
+    if (!Number.isInteger(share.id) || share.id < 1 || share.id > 255) {
+      throw new Error('Share id must be an integer between 1 and 255.');
+    }
     if (share.data.length !== length) {
       throw new Error('Share lengths do not match.');
     }
@@ -148,8 +156,8 @@ const parseShareInput = (input: string) => {
     throw new Error('Share must include id prefix like "1: <share>".');
   }
   const id = Number(match[1]);
-  if (!Number.isInteger(id) || id < 1) {
-    throw new Error('Share id must be a positive integer.');
+  if (!Number.isInteger(id) || id < 1 || id > 255) {
+    throw new Error('Share id must be an integer between 1 and 255.');
   }
   const payload = match[2].trim();
   if (!payload) {
@@ -165,11 +173,19 @@ export const formatShareHex = (share: ShamirShare) => `${share.id}: ${shareToHex
 export const parseShareMnemonic = (input: string): ShamirShare => {
   const { id, payload } = parseShareInput(input);
   const normalized = payload.split(/\s+/).join(' ').trim();
-  return shareFromMnemonic(id, normalized);
+  const share = shareFromMnemonic(id, normalized);
+  if (share.data.length !== SHARE_BYTES) {
+    throw new Error('Share length is invalid.');
+  }
+  return share;
 };
 
 export const parseShareHex = (input: string): ShamirShare => {
   const { id, payload } = parseShareInput(input);
   const normalized = payload.replace(/\s+/g, '');
-  return shareFromHex(id, normalized);
+  const share = shareFromHex(id, normalized);
+  if (share.data.length !== SHARE_BYTES) {
+    throw new Error('Share length is invalid.');
+  }
+  return share;
 };

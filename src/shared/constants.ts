@@ -1,4 +1,4 @@
-export const VAULT_VERSION = 1;
+export const VAULT_VERSION = 2;
 
 export const ENCRYPTION_ALGORITHM_PASSWORD = 'argon2id-mlkem768-aes256gcm' as const;
 export const ENCRYPTION_ALGORITHM_SHAMIR = 'shamir-mlkem768-aes256gcm' as const;

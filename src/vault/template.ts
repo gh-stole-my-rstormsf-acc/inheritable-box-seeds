@@ -35,13 +35,15 @@ const STYLE = `
   .meta { display: flex; flex-direction: column; gap: 4px; color: #555; font-size: 0.9rem; }
   .actions { display: flex; gap: 12px; margin-bottom: 12px; }
   .actions button { padding: 10px 14px; border-radius: 10px; border: 1px solid #d8d2c6; background: #f7f3ec; cursor: pointer; }
-  .derived-group { border: 1px solid #eee; background: #fdf9f2; border-radius: 12px; padding: 12px; margin-bottom: 12px; }
-  .derived-group__header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 10px; }
+  .actions { flex-wrap: wrap; align-items: center; }
+  .derived-group { border: 1px solid #eee; background: #fdf9f2; border-radius: 14px; padding: 16px; margin-bottom: 16px; }
+  .derived-group__header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 12px; }
   .derived-group__meta { display: flex; flex-direction: column; gap: 4px; }
-  .derived-group__passphrase { min-width: 220px; }
-  .derived-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #eee; }
-  .derived-item:last-child { border-bottom: none; }
-  .derived-item code { font-family: "Courier New", monospace; }
+  .derived-group__passphrase { min-width: 220px; display: flex; flex-direction: column; gap: 6px; }
+  .derived-group__passphrase span { color: #5c5242; font-size: 0.9rem; }
+  .derived-list { display: grid; gap: 10px; }
+  .derived-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border: 1px solid #eee; border-radius: 10px; background: #fff; }
+  .derived-item code { font-family: "Courier New", monospace; font-size: 0.9rem; word-break: break-all; }
   .toggle { display: flex; gap: 12px; margin-bottom: 12px; }
   .progress { background: #ece4d7; border-radius: 8px; height: 10px; overflow: hidden; }
   .progress .bar { background: #2f5d62; height: 100%; width: 0; transition: width 0.2s ease; }
@@ -52,13 +54,27 @@ const STYLE = `
 `;
 
 export const buildVaultHtml = (vault: Vault) => {
-  const vaultJson = JSON.stringify(vault);
+  const vaultJson = JSON.stringify(vault).replace(/[<\u2028\u2029]/g, (char) => {
+    switch (char) {
+      case '<':
+        return '\\u003c';
+      case '\u2028':
+        return '\\u2028';
+      case '\u2029':
+        return '\\u2029';
+      default:
+        return char;
+    }
+  });
   return `<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' 'wasm-unsafe-eval'; img-src data:; connect-src 'none';" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none';" />
+    <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+    <meta http-equiv="Referrer-Policy" content="no-referrer" />
+    <meta http-equiv="X-Frame-Options" content="DENY" />
     <title>Seed Vault</title>
     <style>${STYLE}</style>
   </head>

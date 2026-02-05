@@ -1,4 +1,4 @@
-export type VaultVersion = 1;
+export type VaultVersion = 1 | 2;
 
 export interface Vault {
   version: VaultVersion;
@@ -86,7 +86,7 @@ export const isVault = (value: unknown): value is Vault => {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Vault;
   return (
-    candidate.version === 1 &&
+    (candidate.version === 1 || candidate.version === 2) &&
     typeof candidate.created === 'string' &&
     typeof candidate.payload === 'string' &&
     (isPasswordEncryption(candidate.encryption) || isShamirEncryption(candidate.encryption))
