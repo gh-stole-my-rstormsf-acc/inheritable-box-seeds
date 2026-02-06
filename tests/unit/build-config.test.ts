@@ -54,6 +54,7 @@ describe('build config', () => {
     const tokens = getCspTokens(output);
     expect(tokens).toContain("'wasm-unsafe-eval'");
     expect(tokens).not.toContain("'unsafe-eval'");
+    expect(tokens).not.toContain("'frame-ancestors'");
   });
 
   it('keeps unsafe-eval in dev CSP for HMR', () => {
@@ -62,5 +63,6 @@ describe('build config', () => {
     const output = transform(sampleHtml);
     const tokens = getCspTokens(output);
     expect(tokens).toContain("'unsafe-eval'");
+    expect(tokens).not.toContain("'frame-ancestors'");
   });
 });
