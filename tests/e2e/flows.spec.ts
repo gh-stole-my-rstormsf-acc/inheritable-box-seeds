@@ -167,7 +167,7 @@ test('password encryption flow with one seed and three passphrases', async ({ pa
   await goToStep(page, 'paths');
   await addPathToSeedIndex(page, 0);
   await addPathToSeedIndex(page, 0);
-  await expect(page.locator('.path__seed-badge').first()).toContainText('Seed: Primary Seed');
+  await expect(page.locator('.path__seed-badge').first()).toContainText('Seed: Seed 1');
 
   const passphrases = page.locator('input[data-path-passphrase]');
   await passphrases.nth(0).fill('passphrase-one');
@@ -285,6 +285,82 @@ test('password encryption flow with 2 seeds and 2 paths each', async ({ page, co
   await vaultPage.click('[data-derive]');
   await expect(vaultPage.locator('.derived-item code')).toHaveCount(4);
   await expect(vaultPage.locator('[data-derived] .passphrase [data-reveal]')).toHaveCount(4);
+});
+
+test('assigns default seed labels by index', async ({ page }) => {
+  await page.goto('/');
+
+  const seedLabels = page.locator('input[data-seed-label]');
+  await expect(seedLabels.nth(0)).toHaveValue('Seed 1');
+
+  await page.click('[data-add-seed]');
+  await expect(seedLabels.nth(1)).toHaveValue('Seed 2');
+});
+
+test('auto-updates path label from preset until manually overridden', async ({ page }) => {
+  await page.goto('/');
+  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
+  await page.click('[data-step-next]');
+
+  const pathLabel = page.locator('input[data-path-label]').first();
+  await expect(pathLabel).toHaveValue('[Seed 1] BIP-44 Standard 1');
+
+  await page.selectOption('select[data-path-preset]', 'ledger-legacy');
+  await expect(pathLabel).toHaveValue('[Seed 1] Ledger Legacy 1');
+
+  await pathLabel.fill('Custom Path Label');
+  await page.selectOption('select[data-path-preset]', 'ledger-live');
+  await expect(pathLabel).toHaveValue('Custom Path Label');
+});
+
+test('add path does not replace paths section and preserves in-progress field values', async ({ page }) => {
+  await page.goto('/');
+  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
+  await page.click('[data-step-next]');
+
+  await page.fill('input[data-path-label]', 'Draft Label');
+  await page.evaluate(() => {
+    (window as Window & { __pathsSectionRef?: Element | null }).__pathsSectionRef =
+      document.querySelector('[data-paths-section]');
+  });
+
+  await page.click('[data-add-path-global]');
+  await expect(page.locator('[data-create-path]')).toBeVisible();
+  const sameSectionAfterOpen = await page.evaluate(
+    () =>
+      (window as Window & { __pathsSectionRef?: Element | null }).__pathsSectionRef ===
+      document.querySelector('[data-paths-section]')
+  );
+  expect(sameSectionAfterOpen).toBe(true);
+
+  await page.click('[data-create-path]');
+  await expect(page.locator('input[data-path-label]')).toHaveCount(2);
+  const sameSectionAfterCreate = await page.evaluate(
+    () =>
+      (window as Window & { __pathsSectionRef?: Element | null }).__pathsSectionRef ===
+      document.querySelector('[data-paths-section]')
+  );
+  expect(sameSectionAfterCreate).toBe(true);
+  await expect(page.locator('input[data-path-label]').first()).toHaveValue('Draft Label');
+});
+
+test('disables remove button when a seed has only one path', async ({ page }) => {
+  await page.goto('/');
+  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
+  await page.click('[data-step-next]');
+
+  const singlePathRemove = page.locator('[data-remove-path]').first();
+  await expect(singlePathRemove).toBeDisabled();
+  await expect(singlePathRemove).toHaveAttribute('title', /only path for this seed/i);
+
+  await addPathToSeedIndex(page, 0);
+  await expect(page.locator('[data-remove-path]')).toHaveCount(2);
+  await expect(page.locator('[data-remove-path]').first()).toBeEnabled();
+  await expect(page.locator('[data-remove-path]').nth(1)).toBeEnabled();
+
+  await page.locator('[data-remove-path]').nth(1).click();
+  await expect(page.locator('[data-remove-path]')).toHaveCount(1);
+  await expect(page.locator('[data-remove-path]').first()).toBeDisabled();
 });
 
 test('shows step error near next and clears it after fixing seed input', async ({ page }) => {

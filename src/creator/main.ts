@@ -7,10 +7,12 @@ import { formatShareHex, formatShareMnemonic } from '../shared/crypto/shamir';
 import type { VaultData } from '../shared/types';
 import { deriveKeyArgon2Worker } from './crypto/argon2Worker';
 import { validateArgon2Params, DEFAULT_ARGON2_MIN } from './validation/argon2';
+import { canRemovePath, getOnlyPathTooltip, getTotalPreviewCount, shouldShowLargePreviewWarning } from './pathUi';
 
 interface PathForm {
   id: string;
   label: string;
+  labelCustomized: boolean;
   preset: string;
   path: string;
   passphrase: string;
@@ -80,9 +82,15 @@ const WIZARD_STEPS: WizardStep[] = [
   }
 ];
 
-const createPath = (preset = HD_PATH_PRESETS[0]) => ({
+const buildSeedDefaultLabel = (seedIndex: number) => `Seed ${seedIndex + 1}`;
+
+const buildAutoPathLabel = (seedDisplayName: string, presetLabel: string, pathNumber: number) =>
+  `[${seedDisplayName}] ${presetLabel} ${pathNumber}`;
+
+const createPath = (preset = HD_PATH_PRESETS[0], label = preset.label, labelCustomized = false) => ({
   id: crypto.randomUUID(),
-  label: preset.label,
+  label,
+  labelCustomized,
   preset: preset.id,
   path: preset.path,
   passphrase: '',
@@ -94,12 +102,17 @@ const createPath = (preset = HD_PATH_PRESETS[0]) => ({
   previewRequestId: 0
 });
 
-const createSeed = (): SeedForm => ({
+const createSeed = (seedIndex: number): SeedForm => {
+  const seedLabel = buildSeedDefaultLabel(seedIndex);
+  const firstPreset = HD_PATH_PRESETS[0];
+  const initialPath = createPath(firstPreset, buildAutoPathLabel(seedLabel, firstPreset.label, 1), false);
+  return {
   id: crypto.randomUUID(),
-  label: 'Primary Seed',
+  label: seedLabel,
   mnemonic: '',
-  paths: [createPath()]
-});
+  paths: [initialPath]
+  };
+};
 
 const FAST_CRYPTO_FLAG = import.meta.env.VITE_FAST_CRYPTO === 'true';
 if (FAST_CRYPTO_FLAG && import.meta.env.PROD) {
@@ -109,7 +122,7 @@ const FAST_CRYPTO = FAST_CRYPTO_FLAG && !import.meta.env.PROD;
 const FAST_PARAMS = { timeCost: 2, memoryCostMB: 1, parallelism: 1 };
 
 const state = {
-  seeds: [createSeed()],
+  seeds: [createSeed(0)],
   encryption: {
     mode: 'password',
     password: '',
@@ -130,6 +143,7 @@ const state = {
   isGenerating: false,
   progress: 0,
   stepError: '',
+  seedValidationArmed: false,
   currentStep: 'seeds' as WizardStepId,
   isAddPathOpen: false,
   addPathSeedId: '',
@@ -239,6 +253,19 @@ const getSeedDisplayName = (seed: SeedForm) => {
   return `Seed ${index >= 0 ? index + 1 : 1}`;
 };
 
+const getPathNumberForSeed = (seed: SeedForm, pathId: string) => {
+  const pathIndex = seed.paths.findIndex((path) => path.id === pathId);
+  return pathIndex >= 0 ? pathIndex + 1 : 1;
+};
+
+const buildCurrentAutoPathLabel = (seed: SeedForm, path: PathForm, presetId = path.preset) => {
+  const preset = HD_PATH_PRESETS.find((candidate) => candidate.id === presetId);
+  if (!preset) return '';
+  const seedName = getSeedDisplayName(seed);
+  const pathNumber = getPathNumberForSeed(seed, path.id);
+  return buildAutoPathLabel(seedName, preset.label, pathNumber);
+};
+
 const ensureAddPathSelectionDefaults = () => {
   if (!state.seeds.length) return;
   if (!state.seeds.some((seed) => seed.id === state.addPathSeedId)) {
@@ -252,12 +279,12 @@ const ensureAddPathSelectionDefaults = () => {
 const openAddPathDialog = () => {
   ensureAddPathSelectionDefaults();
   state.isAddPathOpen = true;
-  render();
+  if (!syncAddPathPanelUI()) render();
 };
 
 const closeAddPathDialog = () => {
   state.isAddPathOpen = false;
-  render();
+  if (!syncAddPathPanelUI()) render();
 };
 
 const createPathFromDialog = () => {
@@ -269,11 +296,20 @@ const createPathFromDialog = () => {
   const path = createPath(preset);
   const seedName = getSeedDisplayName(targetSeed);
   const nextNumber = targetSeed.paths.length + 1;
-  path.label = `[${seedName}] Path ${nextNumber}`;
+  path.label = buildAutoPathLabel(seedName, preset.label, nextNumber);
+  path.labelCustomized = false;
   targetSeed.paths.push(path);
-  schedulePreview(targetSeed, path);
   state.isAddPathOpen = false;
-  render();
+
+  const panelPatched = syncAddPathPanelUI();
+  const warningPatched = syncPathsPreviewWarningUI();
+  const pathPatched = appendPathCard(targetSeed, path);
+
+  if (!panelPatched || !warningPatched || !pathPatched) {
+    render();
+  }
+
+  schedulePreview(targetSeed, path);
 };
 
 const passwordStrength = (password: string) => {
@@ -559,6 +595,9 @@ const goToStep = (target: WizardStepId) => {
 
   for (let index = currentIndex; index < targetIndex; index += 1) {
     const step = WIZARD_STEPS[index];
+    if (step.id === 'seeds') {
+      state.seedValidationArmed = true;
+    }
     const error = validationErrorForStep(step.id);
     if (error) {
       state.stepError = error;
@@ -575,6 +614,9 @@ const goToStep = (target: WizardStepId) => {
 const goToNextStep = () => {
   const currentIndex = getStepIndex(state.currentStep);
   if (currentIndex === WIZARD_STEPS.length - 1) return;
+  if (state.currentStep === 'seeds') {
+    state.seedValidationArmed = true;
+  }
   const error = validationErrorForStep(state.currentStep);
   if (error) {
     state.stepError = error;
@@ -838,7 +880,7 @@ const buildSeedsSection = () => {
   section.appendChild(
     el('div', { className: 'card__header' }, [
       el('div', {}, [el('h2', { text: 'Step 1: Add Seed Phrases' }), el('p', { className: 'helper', text: 'Add one or more mnemonics first. You will configure paths in the next step.' })]),
-      el('button', { dataset: { addSeed: '' }, text: 'Add Seed' })
+      el('button', { className: 'action-add', dataset: { addSeed: '' }, text: 'Add Seed' })
     ])
   );
 
@@ -863,20 +905,25 @@ const buildSeedsSection = () => {
     );
 
     seedEl.appendChild(el('label', { text: 'Mnemonic (BIP-39)' }));
+    const mnemonicStatus = validateBip39Mnemonic(seed.mnemonic);
+    const showMnemonicValidation = state.seedValidationArmed || seed.mnemonic.trim().length > 0;
     seedEl.appendChild(
       el('textarea', {
-        className: hasFieldError(fieldErrors, 'seedMnemonic', seed.id) ? 'field-error' : undefined,
+        className: showMnemonicValidation && !mnemonicStatus.valid ? 'field-error' : undefined,
         dataset: { seedMnemonic: seed.id },
         placeholder: '12, 18, or 24 lowercase words',
         value: seed.mnemonic
       })
     );
 
-    const mnemonicStatus = validateBip39Mnemonic(seed.mnemonic);
     seedEl.appendChild(
       el('p', {
-        className: `helper ${mnemonicStatus.valid ? 'ok' : 'error'}`,
-        text: mnemonicStatus.valid ? `Checksum valid (${mnemonicStatus.wordCount} words)` : mnemonicStatus.error ?? ''
+        className: `helper ${showMnemonicValidation ? (mnemonicStatus.valid ? 'ok' : 'error') : ''}`,
+        text: !showMnemonicValidation
+          ? 'Enter 12, 18, or 24 words.'
+          : mnemonicStatus.valid
+            ? `Checksum valid (${mnemonicStatus.wordCount} words)`
+            : mnemonicStatus.error ?? ''
       })
     );
     seedEl.appendChild(
@@ -891,16 +938,179 @@ const buildSeedsSection = () => {
   return section;
 };
 
-const buildPathsSection = () => {
-  const totalPreviewCount = state.seeds.reduce(
-    (sum, seed) => sum + seed.paths.reduce((pathSum, path) => pathSum + path.deriveCount, 0),
-    0
+const setRemovePathButtonState = (button: HTMLButtonElement, pathCountForSeed: number) => {
+  const removable = canRemovePath(pathCountForSeed);
+  button.disabled = !removable;
+  button.title = removable ? '' : getOnlyPathTooltip(pathCountForSeed);
+};
+
+const buildAddPathPanel = () => {
+  const panel = el('div', { className: 'add-path-panel', attrs: { role: 'dialog', 'aria-label': 'Create path' } });
+  panel.appendChild(el('h3', { text: 'Add Path to Seed' }));
+  panel.appendChild(el('p', { className: 'helper', text: 'Choose a target seed and preset. The new label will be prefixed automatically.' }));
+
+  panel.appendChild(el('label', { text: 'Seed' }));
+  const seedSelect = el<HTMLSelectElement>('select', { dataset: { newPathSeed: '' } });
+  state.seeds.forEach((seed, seedIndex) => {
+    const option = el<HTMLOptionElement>('option', {
+      attrs: { value: seed.id },
+      text: `Seed ${seedIndex + 1}: ${getSeedDisplayName(seed)}`
+    });
+    if (seed.id === state.addPathSeedId) option.selected = true;
+    seedSelect.appendChild(option);
+  });
+  panel.appendChild(seedSelect);
+
+  panel.appendChild(el('label', { text: 'Preset' }));
+  const presetSelect = el<HTMLSelectElement>('select', { dataset: { newPathPreset: '' } });
+  HD_PATH_PRESETS.forEach((preset) => {
+    const option = el<HTMLOptionElement>('option', {
+      attrs: { value: preset.id },
+      text: preset.label
+    });
+    if (preset.id === state.addPathPresetId) option.selected = true;
+    presetSelect.appendChild(option);
+  });
+  panel.appendChild(presetSelect);
+
+  panel.appendChild(
+    el('div', { className: 'add-path-panel__actions' }, [
+      el('button', { className: 'ghost', dataset: { cancelCreatePath: '' }, text: 'Cancel' }),
+      el('button', { className: 'primary', dataset: { createPath: '' }, text: 'Create Path' })
+    ])
   );
+
+  return panel;
+};
+
+const buildPathsPreviewWarning = () =>
+  el('p', {
+    className: 'helper error',
+    text: 'Large preview counts may take time to compute.'
+  });
+
+const buildPathCard = (seed: SeedForm, path: PathForm, fieldErrors: FieldErrorState) => {
+  const seedName = getSeedDisplayName(seed);
+  const pathStatus = validateHdPathTemplate(path.path);
+  const pathKey = getPathFieldKey(seed.id, path.id);
+  const pathEl = el('div', { className: 'path' });
+  const removeButton = el<HTMLButtonElement>('button', { dataset: { removePath: `${seed.id}:${path.id}` }, text: 'Remove' });
+  setRemovePathButtonState(removeButton, seed.paths.length);
+
+  pathEl.appendChild(
+    el('div', { className: 'path__header' }, [
+      el('strong', { text: path.label || 'Path' }),
+      removeButton
+    ])
+  );
+  pathEl.appendChild(
+    el('p', {
+      className: 'path__seed-badge',
+      dataset: { pathSeedBadge: `${seed.id}:${path.id}` },
+      text: `Seed: ${seedName}`
+    })
+  );
+
+  pathEl.appendChild(el('label', { text: 'Path Label' }));
+  pathEl.appendChild(
+    el('input', {
+      className: hasFieldError(fieldErrors, 'pathLabel', pathKey) ? 'field-error' : undefined,
+      type: 'text',
+      dataset: { pathLabel: `${seed.id}:${path.id}` },
+      value: path.label
+    })
+  );
+
+  pathEl.appendChild(el('label', { text: 'Preset' }));
+  const select = el<HTMLSelectElement>('select', { dataset: { pathPreset: `${seed.id}:${path.id}` } });
+  HD_PATH_PRESETS.forEach((preset) => {
+    const option = el<HTMLOptionElement>('option', {
+      attrs: { value: preset.id },
+      text: preset.label
+    });
+    if (preset.id === path.preset) option.selected = true;
+    select.appendChild(option);
+  });
+  const customOption = el<HTMLOptionElement>('option', {
+    attrs: { value: 'custom' },
+    text: 'Custom'
+  });
+  if (path.preset === 'custom') customOption.selected = true;
+  select.appendChild(customOption);
+  pathEl.appendChild(select);
+
+  pathEl.appendChild(el('label', { text: 'Derivation Path' }));
+  pathEl.appendChild(
+    el('input', {
+      className: hasFieldError(fieldErrors, 'pathValue', pathKey) ? 'field-error' : undefined,
+      type: 'text',
+      dataset: { pathValue: `${seed.id}:${path.id}` },
+      value: path.path
+    })
+  );
+  pathEl.appendChild(
+    el('p', {
+      className: `helper ${pathStatus.valid ? 'ok' : 'error'}`,
+      text: pathStatus.valid ? 'Path valid' : pathStatus.error ?? ''
+    })
+  );
+
+  pathEl.appendChild(el('label', { text: 'BIP-39 Passphrase (optional)' }));
+  pathEl.appendChild(
+    el('input', {
+      type: 'text',
+      dataset: { pathPassphrase: `${seed.id}:${path.id}` },
+      value: path.passphrase
+    })
+  );
+
+  pathEl.appendChild(el('label', { text: 'Passphrase Label' }));
+  pathEl.appendChild(
+    el('input', {
+      className: hasFieldError(fieldErrors, 'pathPassphraseLabel', pathKey) ? 'field-error' : undefined,
+      type: 'text',
+      dataset: { pathPassphraseLabel: `${seed.id}:${path.id}` },
+      value: path.passphraseLabel,
+      placeholder: 'Required if passphrase is set'
+    })
+  );
+
+  pathEl.appendChild(el('label', { text: 'Address Count' }));
+  pathEl.appendChild(
+    el('input', {
+      className: hasFieldError(fieldErrors, 'pathCount', pathKey) ? 'field-error' : undefined,
+      type: 'number',
+      min: '1',
+      max: '100',
+      dataset: { pathCount: `${seed.id}:${path.id}` },
+      value: String(path.deriveCount)
+    })
+  );
+
+  const preview = el('div', { className: 'preview', dataset: { preview: `${seed.id}:${path.id}` } });
+  preview.appendChild(
+    el('p', {
+      className: `helper ${path.previewStatus === 'error' ? 'error' : ''}`,
+      dataset: { previewStatus: '' },
+      text: path.previewMessage
+    })
+  );
+  const previewList = el('div', { className: 'preview__list', dataset: { previewList: '' } });
+  const previewTable = renderPreviewTable(path.previewAddresses);
+  if (previewTable) previewList.appendChild(previewTable);
+  preview.appendChild(previewList);
+  pathEl.appendChild(preview);
+
+  return pathEl;
+};
+
+const buildPathsSection = () => {
+  const totalPreviewCount = getTotalPreviewCount(state.seeds);
 
   ensureAddPathSelectionDefaults();
   const fieldErrors = collectFieldErrors();
 
-  const section = el('section', { className: 'card wizard-card' });
+  const section = el('section', { className: 'card wizard-card', dataset: { pathsSection: '' } });
   section.appendChild(
     el('div', { className: 'card__header' }, [
       el('div', {}, [
@@ -913,180 +1123,33 @@ const buildPathsSection = () => {
       el(
         'div',
         { className: 'paths-global-actions' },
-        [el('button', { dataset: { addPathGlobal: '' }, text: 'Add Path' })]
+        [el('button', { className: 'action-add', dataset: { addPathGlobal: '' }, text: 'Add Path' })]
       )
     ])
   );
 
-  if (state.isAddPathOpen) {
-    const panel = el('div', { className: 'add-path-panel', attrs: { role: 'dialog', 'aria-label': 'Create path' } });
-    panel.appendChild(el('h3', { text: 'Add Path to Seed' }));
-    panel.appendChild(el('p', { className: 'helper', text: 'Choose a target seed and preset. The new label will be prefixed automatically.' }));
+  const addPathPanelHost = el('div', { dataset: { addPathPanelHost: '' } });
+  if (state.isAddPathOpen) addPathPanelHost.appendChild(buildAddPathPanel());
+  section.appendChild(addPathPanelHost);
 
-    panel.appendChild(el('label', { text: 'Seed' }));
-    const seedSelect = el<HTMLSelectElement>('select', { dataset: { newPathSeed: '' } });
-    state.seeds.forEach((seed, seedIndex) => {
-      const option = el<HTMLOptionElement>('option', {
-        attrs: { value: seed.id },
-        text: `Seed ${seedIndex + 1}: ${getSeedDisplayName(seed)}`
-      });
-      if (seed.id === state.addPathSeedId) option.selected = true;
-      seedSelect.appendChild(option);
-    });
-    panel.appendChild(seedSelect);
+  const previewWarningHost = el('div', { dataset: { pathsPreviewWarningHost: '' } });
+  if (shouldShowLargePreviewWarning(totalPreviewCount)) previewWarningHost.appendChild(buildPathsPreviewWarning());
+  section.appendChild(previewWarningHost);
 
-    panel.appendChild(el('label', { text: 'Preset' }));
-    const presetSelect = el<HTMLSelectElement>('select', { dataset: { newPathPreset: '' } });
-    HD_PATH_PRESETS.forEach((preset) => {
-      const option = el<HTMLOptionElement>('option', {
-        attrs: { value: preset.id },
-        text: preset.label
-      });
-      if (preset.id === state.addPathPresetId) option.selected = true;
-      presetSelect.appendChild(option);
-    });
-    panel.appendChild(presetSelect);
-
-    panel.appendChild(
-      el('div', { className: 'add-path-panel__actions' }, [
-        el('button', { className: 'ghost', dataset: { cancelCreatePath: '' }, text: 'Cancel' }),
-        el('button', { className: 'primary', dataset: { createPath: '' }, text: 'Create Path' })
-      ])
-    );
-
-    section.appendChild(panel);
-  }
-
-  if (totalPreviewCount > 50) {
-    section.appendChild(
-      el('p', {
-        className: 'helper error',
-        text: 'Large preview counts may take time to compute.'
-      })
-    );
-  }
-
-  const body = el('div', { className: 'card__body' });
+  const body = el('div', { className: 'card__body', dataset: { pathsBody: '' } });
 
   state.seeds.forEach((seed, seedIndex) => {
     const seedName = getSeedDisplayName(seed);
-    const seedEl = el('div', { className: 'seed seed--paths' });
+    const seedEl = el('div', { className: 'seed seed--paths', dataset: { seedPaths: seed.id } });
     seedEl.appendChild(
       el('div', { className: 'seed__header' }, [
         el('h3', { text: `Seed ${seedIndex + 1}: ${seedName}` })
       ])
     );
 
-    const pathsContainer = el('div', { className: 'paths' });
+    const pathsContainer = el('div', { className: 'paths', dataset: { seedPathsContainer: seed.id } });
     seed.paths.forEach((path) => {
-      const pathStatus = validateHdPathTemplate(path.path);
-      const pathKey = getPathFieldKey(seed.id, path.id);
-      const pathEl = el('div', { className: 'path' });
-      pathEl.appendChild(
-        el('div', { className: 'path__header' }, [
-          el('strong', { text: path.label || 'Path' }),
-          el('button', { dataset: { removePath: `${seed.id}:${path.id}` }, text: 'Remove' })
-        ])
-      );
-      pathEl.appendChild(
-        el('p', {
-          className: 'path__seed-badge',
-          dataset: { pathSeedBadge: `${seed.id}:${path.id}` },
-          text: `Seed: ${seedName}`
-        })
-      );
-
-      pathEl.appendChild(el('label', { text: 'Path Label' }));
-      pathEl.appendChild(
-        el('input', {
-          className: hasFieldError(fieldErrors, 'pathLabel', pathKey) ? 'field-error' : undefined,
-          type: 'text',
-          dataset: { pathLabel: `${seed.id}:${path.id}` },
-          value: path.label
-        })
-      );
-
-      pathEl.appendChild(el('label', { text: 'Preset' }));
-      const select = el<HTMLSelectElement>('select', { dataset: { pathPreset: `${seed.id}:${path.id}` } });
-      HD_PATH_PRESETS.forEach((preset) => {
-        const option = el<HTMLOptionElement>('option', {
-          attrs: { value: preset.id },
-          text: preset.label
-        });
-        if (preset.id === path.preset) option.selected = true;
-        select.appendChild(option);
-      });
-      const customOption = el<HTMLOptionElement>('option', {
-        attrs: { value: 'custom' },
-        text: 'Custom'
-      });
-      if (path.preset === 'custom') customOption.selected = true;
-      select.appendChild(customOption);
-      pathEl.appendChild(select);
-
-      pathEl.appendChild(el('label', { text: 'Derivation Path' }));
-      pathEl.appendChild(
-        el('input', {
-          className: hasFieldError(fieldErrors, 'pathValue', pathKey) ? 'field-error' : undefined,
-          type: 'text',
-          dataset: { pathValue: `${seed.id}:${path.id}` },
-          value: path.path
-        })
-      );
-      pathEl.appendChild(
-        el('p', {
-          className: `helper ${pathStatus.valid ? 'ok' : 'error'}`,
-          text: pathStatus.valid ? 'Path valid' : pathStatus.error ?? ''
-        })
-      );
-
-      pathEl.appendChild(el('label', { text: 'BIP-39 Passphrase (optional)' }));
-      pathEl.appendChild(
-        el('input', {
-          type: 'text',
-          dataset: { pathPassphrase: `${seed.id}:${path.id}` },
-          value: path.passphrase
-        })
-      );
-
-      pathEl.appendChild(el('label', { text: 'Passphrase Label' }));
-      pathEl.appendChild(
-        el('input', {
-          className: hasFieldError(fieldErrors, 'pathPassphraseLabel', pathKey) ? 'field-error' : undefined,
-          type: 'text',
-          dataset: { pathPassphraseLabel: `${seed.id}:${path.id}` },
-          value: path.passphraseLabel,
-          placeholder: 'Required if passphrase is set'
-        })
-      );
-
-      pathEl.appendChild(el('label', { text: 'Address Count' }));
-      pathEl.appendChild(
-        el('input', {
-          className: hasFieldError(fieldErrors, 'pathCount', pathKey) ? 'field-error' : undefined,
-          type: 'number',
-          min: '1',
-          max: '100',
-          dataset: { pathCount: `${seed.id}:${path.id}` },
-          value: String(path.deriveCount)
-        })
-      );
-
-      const preview = el('div', { className: 'preview', dataset: { preview: `${seed.id}:${path.id}` } });
-      preview.appendChild(
-        el('p', {
-          className: `helper ${path.previewStatus === 'error' ? 'error' : ''}`,
-          dataset: { previewStatus: '' },
-          text: path.previewMessage
-        })
-      );
-      const previewList = el('div', { className: 'preview__list', dataset: { previewList: '' } });
-      const previewTable = renderPreviewTable(path.previewAddresses);
-      if (previewTable) previewList.appendChild(previewTable);
-      preview.appendChild(previewList);
-
-      pathEl.appendChild(preview);
-      pathsContainer.appendChild(pathEl);
+      pathsContainer.appendChild(buildPathCard(seed, path, fieldErrors));
     });
 
     seedEl.appendChild(pathsContainer);
@@ -1095,6 +1158,175 @@ const buildPathsSection = () => {
 
   section.appendChild(body);
   return section;
+};
+
+const bindAddPathDialogListeners = (scope: ParentNode) => {
+  scope.querySelector<HTMLSelectElement>('[data-new-path-seed]')?.addEventListener('change', (event) => {
+    state.addPathSeedId = (event.target as HTMLSelectElement).value;
+  });
+
+  scope.querySelector<HTMLSelectElement>('[data-new-path-preset]')?.addEventListener('change', (event) => {
+    state.addPathPresetId = (event.target as HTMLSelectElement).value;
+  });
+
+  scope.querySelector<HTMLButtonElement>('[data-cancel-create-path]')?.addEventListener('click', () => {
+    closeAddPathDialog();
+  });
+
+  scope.querySelector<HTMLButtonElement>('[data-create-path]')?.addEventListener('click', () => {
+    createPathFromDialog();
+  });
+};
+
+const syncRemovePathButtonsForSeed = (seed: SeedForm) => {
+  seed.paths.forEach((path) => {
+    const button = document.querySelector<HTMLButtonElement>(`[data-remove-path="${seed.id}:${path.id}"]`);
+    if (!button) return;
+    setRemovePathButtonState(button, seed.paths.length);
+  });
+};
+
+const bindPathFieldListeners = (scope: ParentNode) => {
+  scope.querySelectorAll<HTMLButtonElement>('[data-remove-path]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const [seedId, pathId] = (btn.dataset.removePath ?? '').split(':');
+      const seed = state.seeds.find((s) => s.id === seedId);
+      if (!seed || !canRemovePath(seed.paths.length)) return;
+      seed.paths = seed.paths.filter((path) => path.id !== pathId);
+      if (seed.paths.length === 0) {
+        const defaultPreset = HD_PATH_PRESETS[0];
+        const label = buildAutoPathLabel(getSeedDisplayName(seed), defaultPreset.label, 1);
+        seed.paths.push(createPath(defaultPreset, label, false));
+      }
+      render();
+    });
+  });
+
+  scope.querySelectorAll<HTMLSelectElement>('[data-path-preset]').forEach((select) => {
+    select.addEventListener('change', () => {
+      const [seedId, pathId] = (select.dataset.pathPreset ?? '').split(':');
+      const seed = state.seeds.find((s) => s.id === seedId);
+      const path = seed?.paths.find((p) => p.id === pathId);
+      if (!path) return;
+      const preset = HD_PATH_PRESETS.find((p) => p.id === select.value);
+      if (preset) {
+        path.preset = preset.id;
+        path.path = preset.path;
+        if (!path.labelCustomized) {
+          path.label = buildCurrentAutoPathLabel(seed, path, preset.id);
+        }
+      } else {
+        path.preset = 'custom';
+      }
+      schedulePreview(seed, path);
+      render();
+    });
+  });
+
+  scope.querySelectorAll<HTMLInputElement>('[data-path-label]').forEach((input) => {
+    input.addEventListener('input', () => {
+      const [seedId, pathId] = (input.dataset.pathLabel ?? '').split(':');
+      const seed = state.seeds.find((s) => s.id === seedId);
+      const path = seed?.paths.find((p) => p.id === pathId);
+      if (path && seed) {
+        path.label = input.value;
+        const autoLabel = buildCurrentAutoPathLabel(seed, path);
+        path.labelCustomized = input.value.trim().length > 0 && input.value !== autoLabel;
+      }
+    });
+  });
+
+  scope.querySelectorAll<HTMLInputElement>('[data-path-value]').forEach((input) => {
+    input.addEventListener('input', () => {
+      const [seedId, pathId] = (input.dataset.pathValue ?? '').split(':');
+      const seed = state.seeds.find((s) => s.id === seedId);
+      const path = seed?.paths.find((p) => p.id === pathId);
+      if (path) {
+        path.path = input.value;
+        path.preset = 'custom';
+        schedulePreview(seed!, path);
+      }
+      render();
+    });
+  });
+
+  scope.querySelectorAll<HTMLInputElement>('[data-path-passphrase]').forEach((input) => {
+    input.addEventListener('input', () => {
+      const [seedId, pathId] = (input.dataset.pathPassphrase ?? '').split(':');
+      const seed = state.seeds.find((s) => s.id === seedId);
+      const path = seed?.paths.find((p) => p.id === pathId);
+      if (path) {
+        path.passphrase = input.value;
+        schedulePreview(seed!, path);
+      }
+    });
+  });
+
+  scope.querySelectorAll<HTMLInputElement>('[data-path-passphrase-label]').forEach((input) => {
+    input.addEventListener('input', () => {
+      const [seedId, pathId] = (input.dataset.pathPassphraseLabel ?? '').split(':');
+      const seed = state.seeds.find((s) => s.id === seedId);
+      const path = seed?.paths.find((p) => p.id === pathId);
+      if (path) {
+        path.passphraseLabel = input.value;
+      }
+    });
+  });
+
+  scope.querySelectorAll<HTMLInputElement>('[data-path-count]').forEach((input) => {
+    const handleCountChange = () => {
+      const [seedId, pathId] = (input.dataset.pathCount ?? '').split(':');
+      const seed = state.seeds.find((s) => s.id === seedId);
+      const path = seed?.paths.find((p) => p.id === pathId);
+      if (path) {
+        path.deriveCount = Number(input.value);
+        schedulePreview(seed!, path);
+      }
+    };
+    input.addEventListener('input', handleCountChange);
+    input.addEventListener('change', handleCountChange);
+  });
+};
+
+const syncAddPathPanelUI = () => {
+  if (state.currentStep !== 'paths') return false;
+  const section = document.querySelector<HTMLElement>('[data-paths-section]');
+  const panelHost = section?.querySelector<HTMLElement>('[data-add-path-panel-host]');
+  if (!panelHost) return false;
+
+  panelHost.replaceChildren();
+  if (state.isAddPathOpen) {
+    const panel = buildAddPathPanel();
+    panelHost.appendChild(panel);
+    bindAddPathDialogListeners(panelHost);
+  }
+  return true;
+};
+
+const syncPathsPreviewWarningUI = () => {
+  if (state.currentStep !== 'paths') return false;
+  const section = document.querySelector<HTMLElement>('[data-paths-section]');
+  const warningHost = section?.querySelector<HTMLElement>('[data-paths-preview-warning-host]');
+  if (!warningHost) return false;
+
+  warningHost.replaceChildren();
+  if (shouldShowLargePreviewWarning(getTotalPreviewCount(state.seeds))) {
+    warningHost.appendChild(buildPathsPreviewWarning());
+  }
+  return true;
+};
+
+const appendPathCard = (seed: SeedForm, path: PathForm) => {
+  if (state.currentStep !== 'paths') return false;
+  const pathsContainer = document.querySelector<HTMLElement>(`[data-seed-paths-container="${seed.id}"]`);
+  if (!pathsContainer) return false;
+
+  const fieldErrors = collectFieldErrors();
+  const pathEl = buildPathCard(seed, path, fieldErrors);
+  pathsContainer.appendChild(pathEl);
+  bindPathFieldListeners(pathEl);
+  syncRemovePathButtonsForSeed(seed);
+  return true;
 };
 
 const buildSecuritySection = () => {
@@ -1425,14 +1657,14 @@ const render = () => {
   });
 
   root.querySelector<HTMLButtonElement>('[data-add-seed]')?.addEventListener('click', () => {
-    state.seeds.push(createSeed());
+    state.seeds.push(createSeed(state.seeds.length));
     render();
   });
 
   root.querySelectorAll<HTMLButtonElement>('[data-remove-seed]').forEach((btn) => {
     btn.addEventListener('click', () => {
       state.seeds = state.seeds.filter((seed) => seed.id !== btn.dataset.removeSeed);
-      if (state.seeds.length === 0) state.seeds.push(createSeed());
+      if (state.seeds.length === 0) state.seeds.push(createSeed(0));
       render();
     });
   });
@@ -1459,111 +1691,8 @@ const render = () => {
     openAddPathDialog();
   });
 
-  root.querySelector<HTMLSelectElement>('[data-new-path-seed]')?.addEventListener('change', (event) => {
-    state.addPathSeedId = (event.target as HTMLSelectElement).value;
-  });
-
-  root.querySelector<HTMLSelectElement>('[data-new-path-preset]')?.addEventListener('change', (event) => {
-    state.addPathPresetId = (event.target as HTMLSelectElement).value;
-  });
-
-  root.querySelector<HTMLButtonElement>('[data-cancel-create-path]')?.addEventListener('click', () => {
-    closeAddPathDialog();
-  });
-
-  root.querySelector<HTMLButtonElement>('[data-create-path]')?.addEventListener('click', () => {
-    createPathFromDialog();
-  });
-
-  root.querySelectorAll<HTMLButtonElement>('[data-remove-path]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const [seedId, pathId] = (btn.dataset.removePath ?? '').split(':');
-      const seed = state.seeds.find((s) => s.id === seedId);
-      if (!seed) return;
-      seed.paths = seed.paths.filter((path) => path.id !== pathId);
-      if (seed.paths.length === 0) seed.paths.push(createPath());
-      render();
-    });
-  });
-
-  root.querySelectorAll<HTMLSelectElement>('[data-path-preset]').forEach((select) => {
-    select.addEventListener('change', () => {
-      const [seedId, pathId] = (select.dataset.pathPreset ?? '').split(':');
-      const seed = state.seeds.find((s) => s.id === seedId);
-      const path = seed?.paths.find((p) => p.id === pathId);
-      if (!path) return;
-      const preset = HD_PATH_PRESETS.find((p) => p.id === select.value);
-      if (preset) {
-        path.preset = preset.id;
-        path.path = preset.path;
-        path.label = preset.label;
-      } else {
-        path.preset = 'custom';
-      }
-      schedulePreview(seed, path);
-      render();
-    });
-  });
-
-  root.querySelectorAll<HTMLInputElement>('[data-path-label]').forEach((input) => {
-    input.addEventListener('input', () => {
-      const [seedId, pathId] = (input.dataset.pathLabel ?? '').split(':');
-      const seed = state.seeds.find((s) => s.id === seedId);
-      const path = seed?.paths.find((p) => p.id === pathId);
-      if (path) path.label = input.value;
-    });
-  });
-
-  root.querySelectorAll<HTMLInputElement>('[data-path-value]').forEach((input) => {
-    input.addEventListener('input', () => {
-      const [seedId, pathId] = (input.dataset.pathValue ?? '').split(':');
-      const seed = state.seeds.find((s) => s.id === seedId);
-      const path = seed?.paths.find((p) => p.id === pathId);
-      if (path) {
-        path.path = input.value;
-        path.preset = 'custom';
-        schedulePreview(seed!, path);
-      }
-      render();
-    });
-  });
-
-  root.querySelectorAll<HTMLInputElement>('[data-path-passphrase]').forEach((input) => {
-    input.addEventListener('input', () => {
-      const [seedId, pathId] = (input.dataset.pathPassphrase ?? '').split(':');
-      const seed = state.seeds.find((s) => s.id === seedId);
-      const path = seed?.paths.find((p) => p.id === pathId);
-      if (path) {
-        path.passphrase = input.value;
-        schedulePreview(seed!, path);
-      }
-    });
-  });
-
-  root.querySelectorAll<HTMLInputElement>('[data-path-passphrase-label]').forEach((input) => {
-    input.addEventListener('input', () => {
-      const [seedId, pathId] = (input.dataset.pathPassphraseLabel ?? '').split(':');
-      const seed = state.seeds.find((s) => s.id === seedId);
-      const path = seed?.paths.find((p) => p.id === pathId);
-      if (path) {
-        path.passphraseLabel = input.value;
-      }
-    });
-  });
-
-  root.querySelectorAll<HTMLInputElement>('[data-path-count]').forEach((input) => {
-    const handleCountChange = () => {
-      const [seedId, pathId] = (input.dataset.pathCount ?? '').split(':');
-      const seed = state.seeds.find((s) => s.id === seedId);
-      const path = seed?.paths.find((p) => p.id === pathId);
-      if (path) {
-        path.deriveCount = Number(input.value);
-        schedulePreview(seed!, path);
-      }
-    };
-    input.addEventListener('input', handleCountChange);
-    input.addEventListener('change', handleCountChange);
-  });
+  bindAddPathDialogListeners(root);
+  bindPathFieldListeners(root);
 
   root.querySelectorAll<HTMLInputElement>('input[name="mode"]').forEach((input) => {
     input.addEventListener('change', () => {
