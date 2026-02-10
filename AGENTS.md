@@ -18,9 +18,11 @@ To avoid breaking this URL:
 
 ## Build/Test Discipline
 
-- After any file change, run:
+- Local branch work (non-`main`): after any file change, run:
+  - `npm run test:unit`
+  - `npm run test:e2e:chromium`
+- Before pushing to `main`, run full cross-browser checks:
   - `npm run test:unit`
   - `npm run test:e2e`
 - If you touch build config or asset paths, also run:
   - `npm run build`
-

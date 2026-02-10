@@ -42,6 +42,14 @@ npm run test:unit
 npm run test:e2e
 ```
 
+For faster local branch iteration, run Chromium-only E2E:
+
+```bash
+npm run test:e2e:chromium
+```
+
+Before pushing to `main`, run the full `npm run test:e2e` suite.
+
 ### Fast crypto for tests
 
 Use a low-cost Argon2 configuration in dev/test runs:

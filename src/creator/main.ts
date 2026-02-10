@@ -49,6 +49,37 @@ interface GeneratedState {
   shares: Array<{ id: number; words: string; hex: string }>;
 }
 
+type WizardStepId = 'seeds' | 'paths' | 'security' | 'finalize';
+
+interface WizardStep {
+  id: WizardStepId;
+  title: string;
+  subtitle: string;
+}
+
+const WIZARD_STEPS: WizardStep[] = [
+  {
+    id: 'seeds',
+    title: 'Seeds',
+    subtitle: 'Seed phrases and labels'
+  },
+  {
+    id: 'paths',
+    title: 'Paths',
+    subtitle: 'Derivation paths and passphrases'
+  },
+  {
+    id: 'security',
+    title: 'Security',
+    subtitle: 'Encryption and recovery mode'
+  },
+  {
+    id: 'finalize',
+    title: 'Finalize',
+    subtitle: 'Generate and download vault'
+  }
+];
+
 const createPath = (preset = HD_PATH_PRESETS[0]) => ({
   id: crypto.randomUUID(),
   label: preset.label,
@@ -93,11 +124,16 @@ const state = {
     threshold: 2,
     totalShares: 3
   } as EncryptionState,
-  status: '',
+  status: 'Complete each step to generate your vault.',
   statusTone: 'info' as 'info' | 'error',
   generated: undefined as GeneratedState | undefined,
   isGenerating: false,
-  progress: 0
+  progress: 0,
+  stepError: '',
+  currentStep: 'seeds' as WizardStepId,
+  isAddPathOpen: false,
+  addPathSeedId: '',
+  addPathPresetId: HD_PATH_PRESETS[0]?.id ?? 'bip44'
 };
 
 type Child = Node | string | null | undefined;
@@ -193,6 +229,50 @@ const el = <T extends HTMLElement>(
 const setStatus = (message: string, tone: 'info' | 'error' = 'info') => {
   state.status = message;
   state.statusTone = tone;
+  render();
+};
+
+const getSeedDisplayName = (seed: SeedForm) => {
+  const label = seed.label.trim();
+  if (label) return label;
+  const index = state.seeds.findIndex((candidate) => candidate.id === seed.id);
+  return `Seed ${index >= 0 ? index + 1 : 1}`;
+};
+
+const ensureAddPathSelectionDefaults = () => {
+  if (!state.seeds.length) return;
+  if (!state.seeds.some((seed) => seed.id === state.addPathSeedId)) {
+    state.addPathSeedId = state.seeds[0].id;
+  }
+  if (!HD_PATH_PRESETS.some((preset) => preset.id === state.addPathPresetId)) {
+    state.addPathPresetId = HD_PATH_PRESETS[0].id;
+  }
+};
+
+const openAddPathDialog = () => {
+  ensureAddPathSelectionDefaults();
+  state.isAddPathOpen = true;
+  render();
+};
+
+const closeAddPathDialog = () => {
+  state.isAddPathOpen = false;
+  render();
+};
+
+const createPathFromDialog = () => {
+  ensureAddPathSelectionDefaults();
+  const targetSeed = state.seeds.find((seed) => seed.id === state.addPathSeedId) ?? state.seeds[0];
+  if (!targetSeed) return;
+
+  const preset = HD_PATH_PRESETS.find((candidate) => candidate.id === state.addPathPresetId) ?? HD_PATH_PRESETS[0];
+  const path = createPath(preset);
+  const seedName = getSeedDisplayName(targetSeed);
+  const nextNumber = targetSeed.paths.length + 1;
+  path.label = `[${seedName}] Path ${nextNumber}`;
+  targetSeed.paths.push(path);
+  schedulePreview(targetSeed, path);
+  state.isAddPathOpen = false;
   render();
 };
 
@@ -296,24 +376,123 @@ const md5Hex = (input: string) => {
   return `${wordToHex(a)}${wordToHex(b)}${wordToHex(c)}${wordToHex(d)}`;
 };
 
-const validateForm = () => {
+interface FieldErrorState {
+  seedLabel: Set<string>;
+  seedMnemonic: Set<string>;
+  pathLabel: Set<string>;
+  pathValue: Set<string>;
+  pathPassphraseLabel: Set<string>;
+  pathCount: Set<string>;
+  password: boolean;
+  confirm: boolean;
+  argonTime: boolean;
+  argonMemory: boolean;
+  argonParallelism: boolean;
+  threshold: boolean;
+  total: boolean;
+}
+
+const getPathFieldKey = (seedId: string, pathId: string) => `${seedId}:${pathId}`;
+
+const emptyFieldErrors = (): FieldErrorState => ({
+  seedLabel: new Set<string>(),
+  seedMnemonic: new Set<string>(),
+  pathLabel: new Set<string>(),
+  pathValue: new Set<string>(),
+  pathPassphraseLabel: new Set<string>(),
+  pathCount: new Set<string>(),
+  password: false,
+  confirm: false,
+  argonTime: false,
+  argonMemory: false,
+  argonParallelism: false,
+  threshold: false,
+  total: false
+});
+
+const collectFieldErrors = (): FieldErrorState => {
+  const fieldErrors = emptyFieldErrors();
+  const labelCounts = new Map<string, number>();
+
+  state.seeds.forEach((seed) => {
+    const label = seed.label.trim();
+    if (!label) {
+      fieldErrors.seedLabel.add(seed.id);
+    } else {
+      labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
+    }
+
+    if (!validateBip39Mnemonic(seed.mnemonic).valid) {
+      fieldErrors.seedMnemonic.add(seed.id);
+    }
+
+    seed.paths.forEach((path) => {
+      const key = getPathFieldKey(seed.id, path.id);
+      if (!path.label.trim()) fieldErrors.pathLabel.add(key);
+      if (!validateHdPathTemplate(path.path).valid) fieldErrors.pathValue.add(key);
+      if (path.passphrase.trim() && !path.passphraseLabel.trim()) fieldErrors.pathPassphraseLabel.add(key);
+      if (path.deriveCount < 1 || path.deriveCount > 100) fieldErrors.pathCount.add(key);
+    });
+  });
+
+  state.seeds.forEach((seed) => {
+    const label = seed.label.trim();
+    if (label && (labelCounts.get(label) ?? 0) > 1) {
+      fieldErrors.seedLabel.add(seed.id);
+    }
+  });
+
+  if (state.encryption.mode === 'password') {
+    if (!state.encryption.password) fieldErrors.password = true;
+    if (state.encryption.password !== state.encryption.confirm) fieldErrors.confirm = true;
+    if (state.encryption.argonPresetId === 'custom' && !validateArgon2Params(state.encryption.argonCustom).valid) {
+      fieldErrors.argonTime = true;
+      fieldErrors.argonMemory = true;
+      fieldErrors.argonParallelism = true;
+    }
+  } else if (state.encryption.threshold < 2 || state.encryption.totalShares < state.encryption.threshold) {
+    fieldErrors.threshold = true;
+    fieldErrors.total = true;
+  }
+
+  return fieldErrors;
+};
+
+const hasFieldError = (fieldErrors: FieldErrorState, group: keyof FieldErrorState, key?: string) => {
+  const target = fieldErrors[group];
+  if (target instanceof Set) {
+    return key ? target.has(key) : false;
+  }
+  return Boolean(target);
+};
+
+const validateSeedsSection = () => {
   const errors: string[] = [];
   const labels = new Set<string>();
 
-  state.seeds.forEach((seed) => {
-    if (!seed.label.trim()) {
+  state.seeds.forEach((seed, index) => {
+    const label = seed.label.trim();
+    if (!label) {
       errors.push('Seed labels are required.');
     }
-    if (labels.has(seed.label.trim())) {
+    if (label && labels.has(label)) {
       errors.push('Seed labels must be unique.');
     }
-    labels.add(seed.label.trim());
+    labels.add(label);
 
     const mnemonicResult = validateBip39Mnemonic(seed.mnemonic);
     if (!mnemonicResult.valid) {
-      errors.push(`Seed "${seed.label}" mnemonic: ${mnemonicResult.error}`);
+      errors.push(`Seed ${index + 1} mnemonic: ${mnemonicResult.error}`);
     }
+  });
 
+  return errors;
+};
+
+const validatePathsSection = () => {
+  const errors: string[] = [];
+
+  state.seeds.forEach((seed) => {
     seed.paths.forEach((path) => {
       if (!path.label.trim()) {
         errors.push('Path labels are required.');
@@ -331,6 +510,12 @@ const validateForm = () => {
     });
   });
 
+  return errors;
+};
+
+const validateSecuritySection = () => {
+  const errors: string[] = [];
+
   if (state.encryption.mode === 'password') {
     if (!state.encryption.password) {
       errors.push('Password is required.');
@@ -344,13 +529,69 @@ const validateForm = () => {
         errors.push(validation.error ?? 'Invalid Argon2 parameters.');
       }
     }
-  } else {
-    if (state.encryption.threshold < 2 || state.encryption.totalShares < state.encryption.threshold) {
-      errors.push('Shamir threshold must be at least 2 and <= total shares.');
-    }
+  } else if (state.encryption.threshold < 2 || state.encryption.totalShares < state.encryption.threshold) {
+    errors.push('Shamir threshold must be at least 2 and <= total shares.');
   }
 
   return errors;
+};
+
+const validateForm = () => [...validateSeedsSection(), ...validatePathsSection(), ...validateSecuritySection()];
+
+const validationErrorForStep = (stepId: WizardStepId) => {
+  if (stepId === 'seeds') return validateSeedsSection()[0];
+  if (stepId === 'paths') return validatePathsSection()[0];
+  if (stepId === 'security') return validateSecuritySection()[0];
+  return undefined;
+};
+
+const getStepIndex = (stepId: WizardStepId) => WIZARD_STEPS.findIndex((step) => step.id === stepId);
+
+const goToStep = (target: WizardStepId) => {
+  const currentIndex = getStepIndex(state.currentStep);
+  const targetIndex = getStepIndex(target);
+  if (targetIndex <= currentIndex) {
+    state.currentStep = target;
+    state.stepError = '';
+    render();
+    return;
+  }
+
+  for (let index = currentIndex; index < targetIndex; index += 1) {
+    const step = WIZARD_STEPS[index];
+    const error = validationErrorForStep(step.id);
+    if (error) {
+      state.stepError = error;
+      render();
+      return;
+    }
+  }
+
+  state.currentStep = target;
+  state.stepError = '';
+  render();
+};
+
+const goToNextStep = () => {
+  const currentIndex = getStepIndex(state.currentStep);
+  if (currentIndex === WIZARD_STEPS.length - 1) return;
+  const error = validationErrorForStep(state.currentStep);
+  if (error) {
+    state.stepError = error;
+    render();
+    return;
+  }
+  state.currentStep = WIZARD_STEPS[currentIndex + 1].id;
+  state.stepError = '';
+  render();
+};
+
+const goToPreviousStep = () => {
+  const currentIndex = getStepIndex(state.currentStep);
+  if (currentIndex <= 0) return;
+  state.currentStep = WIZARD_STEPS[currentIndex - 1].id;
+  state.stepError = '';
+  render();
 };
 
 const buildVaultData = (): VaultData => ({
@@ -568,45 +809,65 @@ const handleGenerate = async () => {
   }
 };
 
+const buildWizardStepper = () => {
+  const currentIndex = getStepIndex(state.currentStep);
+  const nav = el('nav', { className: 'wizard-steps', attrs: { 'aria-label': 'Vault setup steps' } });
+
+  WIZARD_STEPS.forEach((step, index) => {
+    const item = el('button', {
+      className: `wizard-step ${index === currentIndex ? 'is-active' : ''} ${index < currentIndex ? 'is-complete' : ''}`,
+      dataset: { stepLink: step.id },
+      attrs: { type: 'button' }
+    });
+    item.appendChild(el('span', { className: 'wizard-step__dot', text: String(index + 1) }));
+    item.appendChild(
+      el('span', { className: 'wizard-step__text' }, [
+        el('strong', { text: step.title }),
+        el('span', { text: step.subtitle })
+      ])
+    );
+    nav.appendChild(item);
+  });
+
+  return nav;
+};
+
 const buildSeedsSection = () => {
-  const totalPreviewCount = state.seeds.reduce(
-    (sum, seed) => sum + seed.paths.reduce((pathSum, path) => pathSum + path.deriveCount, 0),
-    0
+  const fieldErrors = collectFieldErrors();
+  const section = el('section', { className: 'card wizard-card' });
+  section.appendChild(
+    el('div', { className: 'card__header' }, [
+      el('div', {}, [el('h2', { text: 'Step 1: Add Seed Phrases' }), el('p', { className: 'helper', text: 'Add one or more mnemonics first. You will configure paths in the next step.' })]),
+      el('button', { dataset: { addSeed: '' }, text: 'Add Seed' })
+    ])
   );
-  const showPreviewWarning = totalPreviewCount > 50;
 
-  const section = el('section', { className: 'card' });
-  const header = el('div', { className: 'card__header' }, [
-    el('h2', { text: 'Seeds' }),
-    el('button', { dataset: { addSeed: '' }, text: 'Add Seed' })
-  ]);
   const body = el('div', { className: 'card__body' });
-  if (showPreviewWarning) {
-    body.appendChild(el('p', { className: 'helper error', text: 'Large preview counts may take time.' }));
-  }
-
   state.seeds.forEach((seed, seedIndex) => {
     const seedEl = el('div', { className: 'seed' });
-    const seedHeader = el('div', { className: 'seed__header' }, [
-      el('h3', { text: `Seed ${seedIndex + 1}` }),
-      el('button', { dataset: { removeSeed: seed.id }, text: 'Remove' })
-    ]);
-    seedEl.appendChild(seedHeader);
+    seedEl.appendChild(
+      el('div', { className: 'seed__header' }, [
+        el('h3', { text: `Seed ${seedIndex + 1}` }),
+        el('button', { dataset: { removeSeed: seed.id }, text: 'Remove' })
+      ])
+    );
 
     seedEl.appendChild(el('label', { text: 'Label' }));
     seedEl.appendChild(
       el('input', {
+        className: hasFieldError(fieldErrors, 'seedLabel', seed.id) ? 'field-error' : undefined,
         type: 'text',
         dataset: { seedLabel: seed.id },
         value: seed.label
       })
     );
 
-    seedEl.appendChild(el('label', { text: 'Mnemonic' }));
+    seedEl.appendChild(el('label', { text: 'Mnemonic (BIP-39)' }));
     seedEl.appendChild(
       el('textarea', {
+        className: hasFieldError(fieldErrors, 'seedMnemonic', seed.id) ? 'field-error' : undefined,
         dataset: { seedMnemonic: seed.id },
-        placeholder: '12, 18, or 24 words',
+        placeholder: '12, 18, or 24 lowercase words',
         value: seed.mnemonic
       })
     );
@@ -615,20 +876,111 @@ const buildSeedsSection = () => {
     seedEl.appendChild(
       el('p', {
         className: `helper ${mnemonicStatus.valid ? 'ok' : 'error'}`,
-        text: mnemonicStatus.valid ? `Valid (${mnemonicStatus.wordCount} words)` : mnemonicStatus.error ?? ''
+        text: mnemonicStatus.valid ? `Checksum valid (${mnemonicStatus.wordCount} words)` : mnemonicStatus.error ?? ''
       })
     );
+    seedEl.appendChild(
+      el('p', {
+        className: 'helper',
+        text: `${seed.paths.length} path${seed.paths.length === 1 ? '' : 's'} configured`
+      })
+    );
+    body.appendChild(seedEl);
+  });
+  section.appendChild(body);
+  return section;
+};
 
-    const pathsContainer = el('div', { className: 'paths' });
-    pathsContainer.appendChild(
-      el('div', { className: 'paths__header' }, [
-        el('h4', { text: 'HD Paths' }),
-        el('button', { dataset: { addPath: seed.id }, text: 'Add Path' })
+const buildPathsSection = () => {
+  const totalPreviewCount = state.seeds.reduce(
+    (sum, seed) => sum + seed.paths.reduce((pathSum, path) => pathSum + path.deriveCount, 0),
+    0
+  );
+
+  ensureAddPathSelectionDefaults();
+  const fieldErrors = collectFieldErrors();
+
+  const section = el('section', { className: 'card wizard-card' });
+  section.appendChild(
+    el('div', { className: 'card__header' }, [
+      el('div', {}, [
+        el('h2', { text: 'Step 2: Configure HD Paths' }),
+        el('p', {
+          className: 'helper',
+          text: 'Set derivation presets, optional passphrases, and address counts for each seed.'
+        })
+      ]),
+      el(
+        'div',
+        { className: 'paths-global-actions' },
+        [el('button', { dataset: { addPathGlobal: '' }, text: 'Add Path' })]
+      )
+    ])
+  );
+
+  if (state.isAddPathOpen) {
+    const panel = el('div', { className: 'add-path-panel', attrs: { role: 'dialog', 'aria-label': 'Create path' } });
+    panel.appendChild(el('h3', { text: 'Add Path to Seed' }));
+    panel.appendChild(el('p', { className: 'helper', text: 'Choose a target seed and preset. The new label will be prefixed automatically.' }));
+
+    panel.appendChild(el('label', { text: 'Seed' }));
+    const seedSelect = el<HTMLSelectElement>('select', { dataset: { newPathSeed: '' } });
+    state.seeds.forEach((seed, seedIndex) => {
+      const option = el<HTMLOptionElement>('option', {
+        attrs: { value: seed.id },
+        text: `Seed ${seedIndex + 1}: ${getSeedDisplayName(seed)}`
+      });
+      if (seed.id === state.addPathSeedId) option.selected = true;
+      seedSelect.appendChild(option);
+    });
+    panel.appendChild(seedSelect);
+
+    panel.appendChild(el('label', { text: 'Preset' }));
+    const presetSelect = el<HTMLSelectElement>('select', { dataset: { newPathPreset: '' } });
+    HD_PATH_PRESETS.forEach((preset) => {
+      const option = el<HTMLOptionElement>('option', {
+        attrs: { value: preset.id },
+        text: preset.label
+      });
+      if (preset.id === state.addPathPresetId) option.selected = true;
+      presetSelect.appendChild(option);
+    });
+    panel.appendChild(presetSelect);
+
+    panel.appendChild(
+      el('div', { className: 'add-path-panel__actions' }, [
+        el('button', { className: 'ghost', dataset: { cancelCreatePath: '' }, text: 'Cancel' }),
+        el('button', { className: 'primary', dataset: { createPath: '' }, text: 'Create Path' })
       ])
     );
 
+    section.appendChild(panel);
+  }
+
+  if (totalPreviewCount > 50) {
+    section.appendChild(
+      el('p', {
+        className: 'helper error',
+        text: 'Large preview counts may take time to compute.'
+      })
+    );
+  }
+
+  const body = el('div', { className: 'card__body' });
+
+  state.seeds.forEach((seed, seedIndex) => {
+    const seedName = getSeedDisplayName(seed);
+    const seedEl = el('div', { className: 'seed seed--paths' });
+    seedEl.appendChild(
+      el('div', { className: 'seed__header' }, [
+        el('h3', { text: `Seed ${seedIndex + 1}: ${seedName}` })
+      ])
+    );
+
+    const pathsContainer = el('div', { className: 'paths' });
     seed.paths.forEach((path) => {
       const pathStatus = validateHdPathTemplate(path.path);
+      const pathKey = getPathFieldKey(seed.id, path.id);
       const pathEl = el('div', { className: 'path' });
       pathEl.appendChild(
         el('div', { className: 'path__header' }, [
@@ -636,10 +988,18 @@ const buildSeedsSection = () => {
           el('button', { dataset: { removePath: `${seed.id}:${path.id}` }, text: 'Remove' })
         ])
       );
+      pathEl.appendChild(
+        el('p', {
+          className: 'path__seed-badge',
+          dataset: { pathSeedBadge: `${seed.id}:${path.id}` },
+          text: `Seed: ${seedName}`
+        })
+      );
 
-      pathEl.appendChild(el('label', { text: 'Label' }));
+      pathEl.appendChild(el('label', { text: 'Path Label' }));
       pathEl.appendChild(
         el('input', {
+          className: hasFieldError(fieldErrors, 'pathLabel', pathKey) ? 'field-error' : undefined,
           type: 'text',
           dataset: { pathLabel: `${seed.id}:${path.id}` },
           value: path.label
@@ -664,9 +1024,10 @@ const buildSeedsSection = () => {
       select.appendChild(customOption);
       pathEl.appendChild(select);
 
-      pathEl.appendChild(el('label', { text: 'Path' }));
+      pathEl.appendChild(el('label', { text: 'Derivation Path' }));
       pathEl.appendChild(
         el('input', {
+          className: hasFieldError(fieldErrors, 'pathValue', pathKey) ? 'field-error' : undefined,
           type: 'text',
           dataset: { pathValue: `${seed.id}:${path.id}` },
           value: path.path
@@ -679,7 +1040,7 @@ const buildSeedsSection = () => {
         })
       );
 
-      pathEl.appendChild(el('label', { text: 'Passphrase (optional)' }));
+      pathEl.appendChild(el('label', { text: 'BIP-39 Passphrase (optional)' }));
       pathEl.appendChild(
         el('input', {
           type: 'text',
@@ -691,6 +1052,7 @@ const buildSeedsSection = () => {
       pathEl.appendChild(el('label', { text: 'Passphrase Label' }));
       pathEl.appendChild(
         el('input', {
+          className: hasFieldError(fieldErrors, 'pathPassphraseLabel', pathKey) ? 'field-error' : undefined,
           type: 'text',
           dataset: { pathPassphraseLabel: `${seed.id}:${path.id}` },
           value: path.passphraseLabel,
@@ -701,6 +1063,7 @@ const buildSeedsSection = () => {
       pathEl.appendChild(el('label', { text: 'Address Count' }));
       pathEl.appendChild(
         el('input', {
+          className: hasFieldError(fieldErrors, 'pathCount', pathKey) ? 'field-error' : undefined,
           type: 'number',
           min: '1',
           max: '100',
@@ -730,19 +1093,26 @@ const buildSeedsSection = () => {
     body.appendChild(seedEl);
   });
 
-  section.appendChild(header);
   section.appendChild(body);
   return section;
 };
 
-const buildEncryptionSection = () => {
+const buildSecuritySection = () => {
+  const fieldErrors = collectFieldErrors();
   const argonCustomValidation =
     state.encryption.mode === 'password' && state.encryption.argonPresetId === 'custom'
       ? validateArgon2Params(state.encryption.argonCustom)
       : { valid: true };
 
-  const section = el('section', { className: 'card' });
-  section.appendChild(el('h2', { text: 'Encryption' }));
+  const section = el('section', { className: 'card wizard-card' });
+  section.appendChild(
+    el('div', { className: 'card__header' }, [
+      el('div', {}, [
+        el('h2', { text: 'Step 3: Choose Security Mode' }),
+        el('p', { className: 'helper', text: 'Pick password encryption or Shamir shares, then set recovery details.' })
+      ])
+    ])
+  );
 
   const toggle = el('div', { className: 'toggle' });
   const passwordLabel = el('label');
@@ -773,6 +1143,7 @@ const buildEncryptionSection = () => {
     section.appendChild(el('label', { text: 'Password' }));
     section.appendChild(
       el('input', {
+        className: hasFieldError(fieldErrors, 'password') ? 'field-error' : undefined,
         type: 'password',
         dataset: { password: '' },
         value: state.encryption.password
@@ -781,6 +1152,7 @@ const buildEncryptionSection = () => {
     section.appendChild(el('label', { text: 'Confirm Password' }));
     section.appendChild(
       el('input', {
+        className: hasFieldError(fieldErrors, 'confirm') ? 'field-error' : undefined,
         type: 'password',
         dataset: { confirm: '' },
         value: state.encryption.confirm
@@ -815,6 +1187,7 @@ const buildEncryptionSection = () => {
       const timeRow = el('div', { className: 'row' }, [
         el('label', { text: 'Time cost (t)' }),
         el('input', {
+          className: hasFieldError(fieldErrors, 'argonTime') ? 'field-error' : undefined,
           type: 'number',
           min: String(DEFAULT_ARGON2_MIN.timeCost),
           dataset: { argonTime: '' },
@@ -824,6 +1197,7 @@ const buildEncryptionSection = () => {
       const memoryRow = el('div', { className: 'row' }, [
         el('label', { text: 'Memory (MB)' }),
         el('input', {
+          className: hasFieldError(fieldErrors, 'argonMemory') ? 'field-error' : undefined,
           type: 'number',
           min: String(DEFAULT_ARGON2_MIN.memoryCostMB),
           dataset: { argonMemory: '' },
@@ -833,6 +1207,7 @@ const buildEncryptionSection = () => {
       const parallelRow = el('div', { className: 'row' }, [
         el('label', { text: 'Parallelism (p)' }),
         el('input', {
+          className: hasFieldError(fieldErrors, 'argonParallelism') ? 'field-error' : undefined,
           type: 'number',
           min: String(DEFAULT_ARGON2_MIN.parallelism),
           dataset: { argonParallelism: '' },
@@ -861,6 +1236,7 @@ const buildEncryptionSection = () => {
     const thresholdRow = el('div', { className: 'row' }, [
       el('label', { text: 'Threshold (k)' }),
       el('input', {
+        className: hasFieldError(fieldErrors, 'threshold') ? 'field-error' : undefined,
         type: 'number',
         min: '2',
         max: '10',
@@ -871,6 +1247,7 @@ const buildEncryptionSection = () => {
     const totalRow = el('div', { className: 'row' }, [
       el('label', { text: 'Total Shares (n)' }),
       el('input', {
+        className: hasFieldError(fieldErrors, 'total') ? 'field-error' : undefined,
         type: 'number',
         min: String(state.encryption.threshold),
         max: '10',
@@ -900,9 +1277,24 @@ const buildEncryptionSection = () => {
   return section;
 };
 
-const buildGenerateSection = () => {
-  const section = el('section', { className: 'card' });
-  section.appendChild(el('h2', { text: 'Generate Vault' }));
+const buildFinalizeSection = () => {
+  const section = el('section', { className: 'card wizard-card' });
+  section.appendChild(
+    el('div', { className: 'card__header' }, [
+      el('div', {}, [
+        el('h2', { text: 'Step 4: Finalize Vault' }),
+        el('p', { className: 'helper', text: 'Review status, then generate a self-contained offline vault file.' })
+      ])
+    ])
+  );
+
+  const summary = el('div', { className: 'summary-grid' });
+  summary.appendChild(el('div', { className: 'summary-chip', text: `${state.seeds.length} seed${state.seeds.length === 1 ? '' : 's'}` }));
+  const totalPaths = state.seeds.reduce((sum, seed) => sum + seed.paths.length, 0);
+  summary.appendChild(el('div', { className: 'summary-chip', text: `${totalPaths} path${totalPaths === 1 ? '' : 's'}` }));
+  summary.appendChild(el('div', { className: 'summary-chip', text: `Mode: ${state.encryption.mode === 'password' ? 'Password' : 'Shamir'}` }));
+  section.appendChild(summary);
+
   section.appendChild(el('div', { className: `status ${state.statusTone}`, text: state.status }));
 
   section.appendChild(
@@ -955,16 +1347,59 @@ const buildGenerateSection = () => {
   return section;
 };
 
+const buildWizardNavigation = () => {
+  const wrapper = el('div', { className: 'wizard-controls-wrap' });
+  if (state.stepError) {
+    wrapper.appendChild(el('div', { className: 'status error step-error', dataset: { stepError: '' }, text: state.stepError }));
+  }
+
+  const controls = el('div', { className: 'wizard-controls' });
+  const currentIndex = getStepIndex(state.currentStep);
+  const previousLabel = currentIndex > 0 ? WIZARD_STEPS[currentIndex - 1].title : '';
+  const nextLabel = currentIndex < WIZARD_STEPS.length - 1 ? WIZARD_STEPS[currentIndex + 1].title : '';
+
+  controls.appendChild(
+    el('button', {
+      className: 'ghost',
+      dataset: { stepPrev: '' },
+      disabled: currentIndex === 0 || state.isGenerating,
+      text: currentIndex === 0 ? 'Back' : `Back: ${previousLabel}`
+    })
+  );
+
+  if (state.currentStep !== 'finalize') {
+    controls.appendChild(
+      el('button', {
+        className: 'primary',
+        dataset: { stepNext: '' },
+        disabled: state.isGenerating,
+        text: `Next: ${nextLabel}`
+      })
+    );
+  }
+
+  wrapper.appendChild(controls);
+  return wrapper;
+};
+
+const buildCurrentStepPanel = () => {
+  if (state.currentStep === 'seeds') return buildSeedsSection();
+  if (state.currentStep === 'paths') return buildPathsSection();
+  if (state.currentStep === 'security') return buildSecuritySection();
+  return buildFinalizeSection();
+};
+
 const buildApp = () => {
-  const main = el('main', { className: 'creator' });
+  const main = el('main', { className: 'creator wizard' });
   const header = el('header', { className: 'creator__header' }, [
     el('h1', { text: 'Seed Vault Creator' }),
-    el('p', { text: 'Build an offline, self-contained vault file for your Ethereum wallets.' })
+    el('p', { text: 'A guided, offline flow for seed phrases, derivation paths, and long-term recovery.' })
   ]);
   main.appendChild(header);
-  main.appendChild(buildSeedsSection());
-  main.appendChild(buildEncryptionSection());
-  main.appendChild(buildGenerateSection());
+  main.appendChild(buildWizardStepper());
+  main.appendChild(el('div', { className: `status status--banner ${state.statusTone}`, text: state.status }));
+  main.appendChild(buildCurrentStepPanel());
+  main.appendChild(buildWizardNavigation());
   return main;
 };
 
@@ -972,6 +1407,22 @@ const render = () => {
   const root = document.querySelector<HTMLDivElement>('#app');
   if (!root) return;
   root.replaceChildren(buildApp());
+
+  root.querySelectorAll<HTMLButtonElement>('[data-step-link]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const stepId = button.dataset.stepLink as WizardStepId | undefined;
+      if (!stepId) return;
+      goToStep(stepId);
+    });
+  });
+
+  root.querySelector<HTMLButtonElement>('[data-step-next]')?.addEventListener('click', () => {
+    goToNextStep();
+  });
+
+  root.querySelector<HTMLButtonElement>('[data-step-prev]')?.addEventListener('click', () => {
+    goToPreviousStep();
+  });
 
   root.querySelector<HTMLButtonElement>('[data-add-seed]')?.addEventListener('click', () => {
     state.seeds.push(createSeed());
@@ -1004,13 +1455,24 @@ const render = () => {
     });
   });
 
-  root.querySelectorAll<HTMLButtonElement>('[data-add-path]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const seed = state.seeds.find((s) => s.id === btn.dataset.addPath);
-      if (!seed) return;
-      seed.paths.push(createPath());
-      render();
-    });
+  root.querySelector<HTMLButtonElement>('[data-add-path-global]')?.addEventListener('click', () => {
+    openAddPathDialog();
+  });
+
+  root.querySelector<HTMLSelectElement>('[data-new-path-seed]')?.addEventListener('change', (event) => {
+    state.addPathSeedId = (event.target as HTMLSelectElement).value;
+  });
+
+  root.querySelector<HTMLSelectElement>('[data-new-path-preset]')?.addEventListener('change', (event) => {
+    state.addPathPresetId = (event.target as HTMLSelectElement).value;
+  });
+
+  root.querySelector<HTMLButtonElement>('[data-cancel-create-path]')?.addEventListener('click', () => {
+    closeAddPathDialog();
+  });
+
+  root.querySelector<HTMLButtonElement>('[data-create-path]')?.addEventListener('click', () => {
+    createPathFromDialog();
   });
 
   root.querySelectorAll<HTMLButtonElement>('[data-remove-path]').forEach((btn) => {
