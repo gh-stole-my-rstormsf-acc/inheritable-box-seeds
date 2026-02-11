@@ -514,6 +514,35 @@ test('changing security preset does not replace security section', async ({ page
   await expect(page.locator('[data-argon-preset-hint]')).toBeHidden();
 });
 
+test('toggling encrypted files does not replace files section', async ({ page }) => {
+  await page.goto('/');
+  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
+  await goToStep(page, 'files');
+
+  await page.evaluate(() => {
+    (window as Window & { __filesSectionRef?: Element | null }).__filesSectionRef =
+      document.querySelector('[data-files-section]');
+  });
+
+  await page.check('input[data-files-enabled]');
+  const sameSectionAfterEnable = await page.evaluate(
+    () =>
+      (window as Window & { __filesSectionRef?: Element | null }).__filesSectionRef ===
+      document.querySelector('[data-files-section]')
+  );
+  expect(sameSectionAfterEnable).toBe(true);
+  await expect(page.locator('input[data-files-input]')).toHaveCount(1);
+
+  await page.uncheck('input[data-files-enabled]');
+  const sameSectionAfterDisable = await page.evaluate(
+    () =>
+      (window as Window & { __filesSectionRef?: Element | null }).__filesSectionRef ===
+      document.querySelector('[data-files-section]')
+  );
+  expect(sameSectionAfterDisable).toBe(true);
+  await expect(page.locator('input[data-files-input]')).toHaveCount(0);
+});
+
 test('disables remove button when a seed has only one path', async ({ page }) => {
   await page.goto('/');
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
@@ -681,6 +710,17 @@ test('creator FAQ view toggles from header and renders category accordion', asyn
 
   await categoryButtons.nth(1).click();
   await expect(page.locator('[data-faq-entry-toggle]').first()).toBeVisible();
+});
+
+test('landing footer shows standalone release link in non-standalone build', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('[data-download-offline-creator]')).toHaveCount(0);
+  const releaseLink = page.locator('[data-release-offline-creator]');
+  await expect(releaseLink).toBeVisible();
+  await expect(releaseLink).toHaveAttribute(
+    'href',
+    'https://github.com/gh-stole-my-rstormsf-acc/inheritable-box-seeds/releases/latest/download/seed-vault-standalone.html'
+  );
 });
 
 test('switching between creator and FAQ preserves in-progress wizard state', async ({ page }) => {

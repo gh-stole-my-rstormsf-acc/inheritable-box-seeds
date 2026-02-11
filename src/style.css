@@ -820,6 +820,30 @@ button:hover:not(:disabled) {
   gap: var(--space-3);
 }
 
+.creator__footer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: var(--space-2) 0 var(--space-4);
+  animation: reveal 760ms var(--ease-smooth) both;
+}
+
+.creator__footer-link {
+  color: var(--color-primary);
+  font-size: var(--text-sm);
+  letter-spacing: 0.01em;
+  text-decoration: none;
+  border-bottom: 1px dashed rgba(46, 228, 234, 0.55);
+  padding-bottom: 2px;
+  transition: color 180ms var(--ease-snappy), border-color 180ms var(--ease-snappy), opacity 180ms var(--ease-snappy);
+}
+
+.creator__footer-link:hover,
+.creator__footer-link:focus-visible {
+  color: #8af8fb;
+  border-bottom-color: rgba(138, 248, 251, 0.8);
+}
+
 .step-error {
   margin-bottom: 0;
 }

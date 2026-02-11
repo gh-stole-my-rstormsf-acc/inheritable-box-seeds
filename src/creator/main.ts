@@ -155,6 +155,8 @@ const MAX_VAULT_FILE_COUNT = 12;
 const MAX_VAULT_TOTAL_FILE_BYTES = 25 * 1024 * 1024;
 const CREATOR_HASH_FAQ = '#faq';
 const CREATOR_HASH_WIZARD = '#create';
+const GITHUB_RELEASES_STANDALONE_URL =
+  'https://github.com/gh-stole-my-rstormsf-acc/inheritable-box-seeds/releases/latest/download/seed-vault-standalone.html';
 
 const getViewFromHash = (hash: string): CreatorView =>
   hash.trim().toLowerCase() === CREATOR_HASH_FAQ ? 'faq' : 'wizard';
@@ -321,6 +323,13 @@ const setCreatorView = (view: CreatorView, options: { syncHash?: boolean } = {})
   state.view = view;
   if (syncHash) syncCreatorHash(view);
   render();
+};
+
+const isStandaloneCreatorDocument = () => {
+  if (typeof document === 'undefined') return false;
+  const hasExternalScript = document.querySelector('script[src]') !== null;
+  const hasExternalStylesheet = document.querySelector('link[rel="stylesheet"][href]') !== null;
+  return !hasExternalScript && !hasExternalStylesheet;
 };
 
 let hashListenerBound = false;
@@ -1129,6 +1138,11 @@ const handleDownloadCipherMd = () => {
   setStatus('Ciphertext markdown download started.', 'info');
 };
 
+const handleDownloadCreatorOfflineHtml = () => {
+  const documentHtml = `<!DOCTYPE html>\n${document.documentElement.outerHTML}`;
+  downloadFile(documentHtml, 'seed-vault-creator-offline.html', 'text/html');
+};
+
 const buildWizardStepper = () => {
   const currentIndex = getStepIndex(state.currentStep);
   const nav = el('nav', { className: 'wizard-steps', attrs: { 'aria-label': 'Vault setup steps' } });
@@ -1386,6 +1400,18 @@ const syncFilesFieldErrorUI = () => {
   });
 };
 
+const syncFilesSectionUI = () => {
+  if (state.currentStep !== 'files') return false;
+  const currentSection = document.querySelector<HTMLElement>('[data-files-section]');
+  if (!currentSection) return false;
+
+  const nextSection = buildFilesSection();
+  currentSection.className = nextSection.className;
+  currentSection.replaceChildren(...Array.from(nextSection.childNodes));
+  bindFilesFieldListeners(currentSection);
+  return true;
+};
+
 const bindSeedFieldListeners = (scope: ParentNode) => {
   scope.querySelectorAll<HTMLButtonElement>('[data-remove-seed]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -1423,7 +1449,8 @@ const bindFilesFieldListeners = (scope: ParentNode) => {
     state.fileAttachmentsEnabled = (event.target as HTMLInputElement).checked;
     state.filesValidationArmed = false;
     invalidateShamirPreparation();
-    render();
+    const sectionPatched = syncFilesSectionUI();
+    if (!sectionPatched) render();
   });
 
   scope.querySelector<HTMLInputElement>('[data-files-input]')?.addEventListener('change', async (event) => {
@@ -2475,6 +2502,35 @@ const buildCreatorHeader = () => {
   return header;
 };
 
+const buildCreatorFooter = () =>
+  typeof window !== 'undefined' && window.location.protocol === 'file:'
+    ? null
+    : el('footer', { className: 'creator__footer' }, [
+        isStandaloneCreatorDocument()
+          ? el(
+              'a',
+              {
+                className: 'creator__footer-link',
+                dataset: { downloadOfflineCreator: '' },
+                attrs: {
+                  href: '#',
+                  role: 'button'
+                },
+                text: 'Download for offline usage'
+              }
+            )
+          : el('a', {
+              className: 'creator__footer-link',
+              dataset: { releaseOfflineCreator: '' },
+              attrs: {
+                href: GITHUB_RELEASES_STANDALONE_URL,
+                target: '_blank',
+                rel: 'noreferrer noopener'
+              },
+              text: 'Get standalone release'
+            })
+      ]);
+
 const buildApp = () => {
   const main = el('main', { className: 'creator wizard' });
   main.appendChild(buildCreatorHeader());
@@ -2490,6 +2546,10 @@ const buildApp = () => {
   }
   main.appendChild(buildCurrentStepPanel());
   main.appendChild(buildWizardNavigation());
+  const creatorFooter = buildCreatorFooter();
+  if (creatorFooter) {
+    main.appendChild(creatorFooter);
+  }
   return main;
 };
 
@@ -2662,6 +2722,10 @@ const render = () => {
   root.querySelector<HTMLButtonElement>('[data-generate]')?.addEventListener('click', handleGenerate);
   root.querySelector<HTMLButtonElement>('[data-download-vault-html]')?.addEventListener('click', handleDownloadVaultHtml);
   root.querySelector<HTMLButtonElement>('[data-download-cipher-md]')?.addEventListener('click', handleDownloadCipherMd);
+  root.querySelector<HTMLElement>('[data-download-offline-creator]')?.addEventListener('click', (event) => {
+    event.preventDefault();
+    handleDownloadCreatorOfflineHtml();
+  });
 
   root.querySelectorAll<HTMLInputElement>('input[name="share-display"]').forEach((input) => {
     input.addEventListener('change', () => {
