@@ -33,7 +33,25 @@ jobs:
         run: npm ci
 
       - name: Build standalone HTML
-        run: npm run build
+        run: npm run build:standalone
+
+      - name: Verify standalone artifact excludes landing
+        run: |
+          test -f dist/index.html
+          if grep -q 'data-landing' dist/index.html; then
+            echo "Standalone artifact must not include landing markup."
+            exit 1
+          fi
+          if grep -q 'data-enter-creator' dist/index.html; then
+            echo "Standalone artifact must not include landing CTA selectors."
+            exit 1
+          fi
+          if grep -q '#home' dist/index.html; then
+            echo "Standalone artifact must not include #home route."
+            exit 1
+          fi
+          grep -q 'data-step-next' dist/index.html
+          grep -q 'data-faq-category' dist/index.html
 
       - name: Prepare release assets
         run: |

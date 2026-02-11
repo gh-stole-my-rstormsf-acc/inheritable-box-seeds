@@ -106,8 +106,51 @@ const decryptVault = async (context: any, vaultPath: string, password = longPass
   return vaultPage;
 };
 
-test('password encryption flow', async ({ page, context }, testInfo) => {
+const openCreator = async (page: any) => {
   await page.goto('/');
+  await expect(page.locator('[data-landing]')).toHaveCount(1);
+  await expect.poll(() => page.evaluate(() => window.location.hash)).toBe('#home');
+  await page.locator('[data-enter-creator]').first().click();
+  await expect(page.locator('[data-step-link="seeds"]')).toHaveClass(/is-active/);
+  await expect.poll(() => page.evaluate(() => window.location.hash)).toBe('#create');
+};
+
+test('landing is the default root view', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('[data-landing]')).toHaveCount(1);
+  await expect(page.locator('[data-landing-workflow]')).toHaveCount(1);
+  await expect(page.locator('[data-landing-use-cases]')).toHaveCount(1);
+  await expect.poll(() => page.evaluate(() => window.location.hash)).toBe('#home');
+});
+
+test('landing create CTA opens creator wizard', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('[data-enter-creator]').first().click();
+  await expect(page.locator('[data-step-link="seeds"]')).toHaveClass(/is-active/);
+  await expect.poll(() => page.evaluate(() => window.location.hash)).toBe('#create');
+});
+
+test('landing FAQ CTA opens creator FAQ view', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('[data-open-faq]').first().click();
+  await expect(page.locator('[data-faq-page]')).toHaveCount(1);
+  await expect.poll(() => page.evaluate(() => window.location.hash)).toBe('#faq');
+});
+
+test('direct hash route #create opens wizard view', async ({ page }) => {
+  await page.goto('/#create');
+  await expect(page.locator('[data-step-link="seeds"]')).toHaveClass(/is-active/);
+  await expect(page.locator('[data-landing]')).toHaveCount(0);
+});
+
+test('direct hash route #faq opens faq view', async ({ page }) => {
+  await page.goto('/#faq');
+  await expect(page.locator('[data-faq-page]')).toHaveCount(1);
+  await expect(page.locator('[data-landing]')).toHaveCount(0);
+});
+
+test('password encryption flow', async ({ page, context }, testInfo) => {
+  await openCreator(page);
   await generateVault(page);
   await expect(page.locator('[data-preview-list] code')).toHaveCount(1);
   await goToStep(page, 'security');
@@ -153,7 +196,7 @@ test('password encryption flow', async ({ page, context }, testInfo) => {
 });
 
 test('password encryption flow with attached files', async ({ page, context }, testInfo) => {
-  await page.goto('/');
+  await openCreator(page);
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
   await goToStep(page, 'files');
   await page.check('input[data-files-enabled]');
@@ -188,7 +231,7 @@ test('password encryption flow with attached files', async ({ page, context }, t
 });
 
 test('shamir encryption flow', async ({ page, context }, testInfo) => {
-  await page.goto('/');
+  await openCreator(page);
   await generateVault(page);
   await goToStep(page, 'security');
   await page.check('input[value="shamir"]');
@@ -251,7 +294,7 @@ test('shamir encryption flow', async ({ page, context }, testInfo) => {
 });
 
 test('password encryption flow with multiple seeds', async ({ page, context }, testInfo) => {
-  await page.goto('/');
+  await openCreator(page);
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
   await page.click('[data-add-seed]');
   const mnemonics = page.locator('textarea[data-seed-mnemonic]');
@@ -276,7 +319,7 @@ test('password encryption flow with multiple seeds', async ({ page, context }, t
 });
 
 test('password encryption flow with one seed and three passphrases', async ({ page, context }, testInfo) => {
-  await page.goto('/');
+  await openCreator(page);
   await page.fill('textarea[data-seed-mnemonic]', mnemonicAlt2);
   await goToStep(page, 'paths');
   await addPathToSeedIndex(page, 0);
@@ -308,7 +351,7 @@ test('password encryption flow with one seed and three passphrases', async ({ pa
 });
 
 test('password encryption flow with one seed, passphrase, and three HD paths', async ({ page, context }, testInfo) => {
-  await page.goto('/');
+  await openCreator(page);
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
   await goToStep(page, 'paths');
   await addPathToSeedIndex(page, 0);
@@ -345,7 +388,7 @@ test('password encryption flow with one seed, passphrase, and three HD paths', a
 });
 
 test('password encryption flow with 2 seeds and 2 paths each', async ({ page, context }, testInfo) => {
-  await page.goto('/');
+  await openCreator(page);
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
   await page.click('[data-add-seed]');
 
@@ -406,7 +449,7 @@ test('password encryption flow with 2 seeds and 2 paths each', async ({ page, co
 });
 
 test('assigns default seed labels by index', async ({ page }) => {
-  await page.goto('/');
+  await openCreator(page);
 
   const seedLabels = page.locator('input[data-seed-label]');
   await expect(seedLabels.nth(0)).toHaveValue('Seed 1');
@@ -416,7 +459,7 @@ test('assigns default seed labels by index', async ({ page }) => {
 });
 
 test('add seed does not replace seeds section and preserves in-progress mnemonic', async ({ page }) => {
-  await page.goto('/');
+  await openCreator(page);
   await page.fill('textarea[data-seed-mnemonic]', 'abandon abandon');
   await page.evaluate(() => {
     (window as Window & { __seedsSectionRef?: Element | null }).__seedsSectionRef =
@@ -436,7 +479,7 @@ test('add seed does not replace seeds section and preserves in-progress mnemonic
 });
 
 test('auto-updates path label from preset until manually overridden', async ({ page }) => {
-  await page.goto('/');
+  await openCreator(page);
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
   await goToStep(page, 'paths');
 
@@ -452,7 +495,7 @@ test('auto-updates path label from preset until manually overridden', async ({ p
 });
 
 test('add path does not replace paths section and preserves in-progress field values', async ({ page }) => {
-  await page.goto('/');
+  await openCreator(page);
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
   await goToStep(page, 'paths');
 
@@ -474,7 +517,7 @@ test('add path does not replace paths section and preserves in-progress field va
 });
 
 test('changing path preset does not replace paths section', async ({ page }) => {
-  await page.goto('/');
+  await openCreator(page);
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
   await goToStep(page, 'paths');
 
@@ -494,7 +537,7 @@ test('changing path preset does not replace paths section', async ({ page }) => 
 });
 
 test('editing path value does not replace paths section', async ({ page }) => {
-  await page.goto('/');
+  await openCreator(page);
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
   await goToStep(page, 'paths');
 
@@ -514,7 +557,7 @@ test('editing path value does not replace paths section', async ({ page }) => {
 });
 
 test('changing security preset does not replace security section', async ({ page }) => {
-  await page.goto('/');
+  await openCreator(page);
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
   await goToStep(page, 'security');
 
@@ -535,7 +578,7 @@ test('changing security preset does not replace security section', async ({ page
 });
 
 test('changing security mode does not replace security section', async ({ page }) => {
-  await page.goto('/');
+  await openCreator(page);
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
   await goToStep(page, 'security');
 
@@ -564,7 +607,7 @@ test('changing security mode does not replace security section', async ({ page }
 });
 
 test('toggling encrypted files does not replace files section', async ({ page }) => {
-  await page.goto('/');
+  await openCreator(page);
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
   await goToStep(page, 'files');
 
@@ -593,7 +636,7 @@ test('toggling encrypted files does not replace files section', async ({ page })
 });
 
 test('disables remove button when a seed has only one path', async ({ page }) => {
-  await page.goto('/');
+  await openCreator(page);
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
   await goToStep(page, 'paths');
 
@@ -612,7 +655,7 @@ test('disables remove button when a seed has only one path', async ({ page }) =>
 });
 
 test('wizard step badges are non-interactive representation only', async ({ page }) => {
-  await page.goto('/');
+  await openCreator(page);
   const stepButtons = page.locator('[data-step-link]');
   await expect(stepButtons).toHaveCount(5);
 
@@ -627,7 +670,7 @@ test('wizard step badges are non-interactive representation only', async ({ page
 });
 
 test('shows step error near next and clears it after fixing seed input', async ({ page }) => {
-  await page.goto('/');
+  await openCreator(page);
 
   await page.click('[data-step-next]');
   await expect(page.locator('[data-step-error]')).toContainText(/mnemonic/i);
@@ -640,7 +683,7 @@ test('shows step error near next and clears it after fixing seed input', async (
 });
 
 test('shows path step error with red field and clears after fix', async ({ page }) => {
-  await page.goto('/');
+  await openCreator(page);
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
   await goToStep(page, 'paths');
 
@@ -657,7 +700,7 @@ test('shows path step error with red field and clears after fix', async ({ page 
 });
 
 test('does not show password error on security step until next is clicked', async ({ page }) => {
-  await page.goto('/');
+  await openCreator(page);
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
   await goToStep(page, 'security');
 
@@ -673,7 +716,7 @@ test('does not show password error on security step until next is clicked', asyn
 });
 
 test('password reveal toggle shows both fields and confirmation mismatch blocks next', async ({ page }) => {
-  await page.goto('/');
+  await openCreator(page);
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
   await goToStep(page, 'security');
 
@@ -700,7 +743,7 @@ test('password reveal toggle shows both fields and confirmation mismatch blocks 
 });
 
 test('shamir mode shows generate button and renders shares after generate', async ({ page }, testInfo) => {
-  await page.goto('/');
+  await openCreator(page);
   await generateVault(page);
 
   await goToStep(page, 'security');
@@ -739,7 +782,7 @@ test('shamir mode shows generate button and renders shares after generate', asyn
 });
 
 test('finalize locks generate and back after successful generation', async ({ page }) => {
-  await page.goto('/');
+  await openCreator(page);
   await generateVault(page);
   await fillPasswordFields(page);
   await goToStep(page, 'finalize');
@@ -756,7 +799,7 @@ test('finalize locks generate and back after successful generation', async ({ pa
 });
 
 test('creator FAQ view toggles from header and renders category accordion', async ({ page }) => {
-  await page.goto('/');
+  await openCreator(page);
   await expect(page.locator('[data-faq-page]')).toHaveCount(0);
 
   await page.click('[data-view-switch="faq"]');
@@ -780,6 +823,7 @@ test('creator FAQ view toggles from header and renders category accordion', asyn
 
 test('landing footer shows standalone release link in non-standalone build', async ({ page }) => {
   await page.goto('/');
+  await expect(page.locator('[data-landing]')).toHaveCount(1);
   const offlineLink = page.locator('[data-download-offline-creator]');
   await expect(offlineLink).toBeVisible();
   await expect(offlineLink).toHaveText(/download for offline usage/i);
@@ -790,7 +834,7 @@ test('landing footer shows standalone release link in non-standalone build', asy
 });
 
 test('switching between creator and FAQ preserves in-progress wizard state', async ({ page }) => {
-  await page.goto('/');
+  await openCreator(page);
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
   await goToStep(page, 'paths');
   await page.fill('input[data-path-label]', 'State Preservation Path');
@@ -806,7 +850,7 @@ test('switching between creator and FAQ preserves in-progress wizard state', asy
 });
 
 test('generated vault HTML does not include creator FAQ page markup', async ({ page }, testInfo) => {
-  await page.goto('/');
+  await openCreator(page);
   await generateVault(page);
   await fillPasswordFields(page);
   const vaultPath = await downloadVault(page, testInfo, 'vault-no-faq-markup.html');

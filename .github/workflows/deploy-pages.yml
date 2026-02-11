@@ -32,6 +32,12 @@ jobs:
         run: npm ci
       - name: Build
         run: npm run build
+      - name: Verify pages artifact includes landing
+        run: |
+          test -f dist/index.html
+          grep -q 'data-landing' dist/index.html
+          grep -q '#home' dist/index.html
+          grep -q 'data-enter-creator' dist/index.html
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:

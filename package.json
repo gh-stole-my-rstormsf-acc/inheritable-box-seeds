@@ -9,6 +9,7 @@
     "build:vault-runtime": "node scripts/build-vault-runtime.mjs",
     "prebuild": "node scripts/build-vault-runtime.mjs",
     "build": "vite build",
+    "build:standalone": "node scripts/build-vault-runtime.mjs && vite build --config vite.standalone.config.ts && node scripts/inline-dist.mjs",
     "postbuild": "node scripts/inline-dist.mjs",
     "preview": "vite preview",
     "test:unit": "vitest run --passWithNoTests",

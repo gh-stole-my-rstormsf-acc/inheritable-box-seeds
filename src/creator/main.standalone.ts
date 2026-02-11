@@ -76,7 +76,7 @@ interface PreparedShamirState {
 }
 
 type WizardStepId = 'seeds' | 'files' | 'paths' | 'security' | 'finalize';
-type CreatorView = 'landing' | 'wizard' | 'faq';
+type CreatorView = 'wizard' | 'faq';
 
 interface WizardStep {
   id: WizardStepId;
@@ -153,21 +153,16 @@ const FAST_PARAMS = { timeCost: 2, memoryCostMB: 1, parallelism: 1 };
 const DEFAULT_STATUS_MESSAGE = 'Complete each step to generate your vault.';
 const MAX_VAULT_FILE_COUNT = 12;
 const MAX_VAULT_TOTAL_FILE_BYTES = 25 * 1024 * 1024;
-const CREATOR_HASH_HOME = '#home';
 const CREATOR_HASH_FAQ = '#faq';
 const CREATOR_HASH_WIZARD = '#create';
 const GITHUB_RELEASES_STANDALONE_URL =
   'https://github.com/gh-stole-my-rstormsf-acc/inheritable-box-seeds/releases/latest/download/seed-vault-standalone.html';
 
-const getViewFromHash = (hash: string): CreatorView => {
-  const normalized = hash.trim().toLowerCase();
-  if (normalized === CREATOR_HASH_WIZARD) return 'wizard';
-  if (normalized === CREATOR_HASH_FAQ) return 'faq';
-  return 'landing';
-};
+const getViewFromHash = (hash: string): CreatorView =>
+  hash.trim().toLowerCase() === CREATOR_HASH_FAQ ? 'faq' : 'wizard';
 
 const getInitialView = (): CreatorView => {
-  if (typeof window === 'undefined') return 'landing';
+  if (typeof window === 'undefined') return 'wizard';
   return getViewFromHash(window.location.hash);
 };
 
@@ -341,12 +336,7 @@ const getSelectedFaqCategory = () => {
 
 const syncCreatorHash = (view: CreatorView) => {
   if (typeof window === 'undefined') return;
-  const targetHash =
-    view === 'landing'
-      ? CREATOR_HASH_HOME
-      : view === 'faq'
-        ? CREATOR_HASH_FAQ
-        : CREATOR_HASH_WIZARD;
+  const targetHash = view === 'faq' ? CREATOR_HASH_FAQ : CREATOR_HASH_WIZARD;
   if (window.location.hash === targetHash) return;
   const nextUrl = `${window.location.pathname}${window.location.search}${targetHash}`;
   window.history.replaceState(null, '', nextUrl);
@@ -2545,215 +2535,6 @@ const buildCurrentStepPanel = () => {
   return buildFinalizeSection();
 };
 
-const buildLandingPage = () => {
-  const section = el('section', { className: 'landing', attrs: { 'data-landing': '' } });
-
-  const nav = el('header', { className: 'landing-nav' });
-  nav.appendChild(
-    el('div', { className: 'landing-nav__brand' }, [
-      el('span', { className: 'landing-nav__eyebrow', text: 'Seed Vault Creator' }),
-      el('p', {
-        className: 'landing-nav__tagline',
-        text: 'Air-gapped seed protection with path-aware recovery documentation.'
-      })
-    ])
-  );
-  const navActions = el('div', { className: 'landing-nav__actions' });
-  navActions.appendChild(
-    el('button', {
-      className: 'primary',
-      dataset: { enterCreator: '' },
-      attrs: { type: 'button' },
-      text: 'Create Vault'
-    })
-  );
-  navActions.appendChild(
-    el('button', {
-      className: 'ghost',
-      dataset: { openFaq: '' },
-      attrs: { type: 'button' },
-      text: 'Read FAQ'
-    })
-  );
-  nav.appendChild(navActions);
-  section.appendChild(nav);
-
-  const badgeRow = el('div', { className: 'landing-badges' });
-  ['Offline by design', 'Post-quantum hybrid encryption', 'Password + Shamir recovery'].forEach((badge) => {
-    badgeRow.appendChild(el('span', { className: 'landing-badge', text: badge }));
-  });
-  section.appendChild(badgeRow);
-
-  const hero = el('section', { className: 'landing-hero' });
-  hero.appendChild(
-    el('div', { className: 'landing-hero__content' }, [
-      el('p', { className: 'landing-hero__eyebrow', text: 'Portable Security Archive' }),
-      el('h1', { text: 'Build a durable seed vault for inheritance, recovery, and incident response.' }),
-      el('p', {
-        className: 'landing-hero__lead',
-        text: 'Generate a self-contained vault HTML that keeps mnemonics, HD paths, passphrase labels, and optional encrypted files together in one offline package.'
-      })
-    ])
-  );
-
-  const heroProofs = el('ul', { className: 'landing-proof-list' });
-  [
-    'No external calls in generated vaults. Everything decrypts locally.',
-    'Threshold recovery is gated and reviewed before finalization in Shamir mode.',
-    'Derived address preview validates your path setup without exposing private keys.'
-  ].forEach((proof) => {
-    heroProofs.appendChild(
-      el('li', { className: 'landing-proof-item' }, [el('span', { className: 'landing-proof-item__dot', text: 'OK' }), proof])
-    );
-  });
-  hero.appendChild(heroProofs);
-
-  const heroPanel = el('aside', { className: 'landing-hero__panel' });
-  heroPanel.appendChild(el('h2', { text: 'What you ship' }));
-  const panelList = el('ul', { className: 'landing-panel-list' });
-  [
-    'Seed Vault HTML (offline decrypt + derive UI)',
-    'Ciphertext instruction markdown for safe storage',
-    'Optional encrypted file bundle metadata',
-    'Shamir shares in words + hex when applicable'
-  ].forEach((item) => {
-    panelList.appendChild(el('li', { text: item }));
-  });
-  heroPanel.appendChild(panelList);
-  hero.appendChild(heroPanel);
-
-  const heroActions = el('div', { className: 'landing-hero__actions' });
-  heroActions.appendChild(
-    el('button', {
-      className: 'primary',
-      dataset: { enterCreator: '' },
-      attrs: { type: 'button' },
-      text: 'Start Vault Wizard'
-    })
-  );
-  heroActions.appendChild(
-    el('button', {
-      className: 'ghost',
-      dataset: { openFaq: '' },
-      attrs: { type: 'button' },
-      text: 'Review Security FAQ'
-    })
-  );
-  hero.appendChild(heroActions);
-  section.appendChild(hero);
-
-  const workflow = el('section', { className: 'landing-workflow', dataset: { landingWorkflow: '' } });
-  workflow.appendChild(el('h2', { text: 'Three-step recovery workflow' }));
-  workflow.appendChild(
-    el('p', {
-      className: 'landing-section-intro',
-      text: 'Document everything once, distribute responsibly, and recover with predictable instructions.'
-    })
-  );
-  const workflowGrid = el('div', { className: 'landing-workflow__grid' });
-  [
-    {
-      title: 'Capture',
-      body: 'Add one or more mnemonics, label each seed, and configure per-seed HD paths with passphrase labels.'
-    },
-    {
-      title: 'Protect',
-      body: 'Choose password mode or Shamir threshold mode, tune Argon2 parameters, then verify prepared artifacts.'
-    },
-    {
-      title: 'Recover',
-      body: 'Download vault + ciphertext docs, store offline copies, and decrypt later with password or valid shares.'
-    }
-  ].forEach((step, index) => {
-    const card = el('article', { className: 'landing-step' });
-    card.appendChild(el('span', { className: 'landing-step__index', text: String(index + 1) }));
-    card.appendChild(el('h3', { text: step.title }));
-    card.appendChild(el('p', { text: step.body }));
-    workflowGrid.appendChild(card);
-  });
-  workflow.appendChild(workflowGrid);
-  section.appendChild(workflow);
-
-  const useCases = el('section', { className: 'landing-use-cases', dataset: { landingUseCases: '' } });
-  useCases.appendChild(el('h2', { text: 'Seed vault creator use cases' }));
-  const useCaseGrid = el('div', { className: 'landing-use-cases__grid' });
-  [
-    {
-      title: 'Inheritance Planning',
-      body: 'Create threshold-based recovery packets where no single party holds full control.'
-    },
-    {
-      title: 'Multi-Path Wallet Tracking',
-      body: 'Store Ledger legacy/live and custom paths side by side with clean passphrase labeling.'
-    },
-    {
-      title: 'Incident Backups',
-      body: 'Attach encrypted emergency files such as password exports or legal instruction bundles.'
-    },
-    {
-      title: 'Offline Verification',
-      body: 'Derive known EVM addresses directly from vault data to verify records before critical events.'
-    }
-  ].forEach((useCase) => {
-    const card = el('article', { className: 'landing-use-case' });
-    card.appendChild(el('h3', { text: useCase.title }));
-    card.appendChild(el('p', { text: useCase.body }));
-    useCaseGrid.appendChild(card);
-  });
-  useCases.appendChild(useCaseGrid);
-  section.appendChild(useCases);
-
-  const faqEntries = FAQ_CATEGORIES.flatMap((category) => category.entries).slice(0, 3);
-  const faqTeaser = el('section', { className: 'landing-faq-teaser' });
-  faqTeaser.appendChild(el('h2', { text: 'Common setup questions' }));
-  const faqGrid = el('div', { className: 'landing-faq-teaser__grid' });
-  faqEntries.forEach((entry) => {
-    const card = el('article', { className: 'landing-faq-teaser__item' });
-    card.appendChild(el('h3', { text: entry.question }));
-    card.appendChild(el('p', { text: entry.answer }));
-    faqGrid.appendChild(card);
-  });
-  faqTeaser.appendChild(faqGrid);
-  faqTeaser.appendChild(
-    el('button', {
-      className: 'ghost landing-faq-teaser__action',
-      dataset: { openFaq: '' },
-      attrs: { type: 'button' },
-      text: `Open Full FAQ (${FAQ_ENTRY_COUNT} entries)`
-    })
-  );
-  section.appendChild(faqTeaser);
-
-  const cta = el('section', { className: 'landing-final-cta' });
-  cta.appendChild(el('h2', { text: 'Ready to build your vault package?' }));
-  cta.appendChild(
-    el('p', {
-      text: 'Start the guided creator now, then download a deterministic offline vault artifact for long-term storage.'
-    })
-  );
-  const ctaActions = el('div', { className: 'landing-final-cta__actions' });
-  ctaActions.appendChild(
-    el('button', {
-      className: 'primary',
-      dataset: { enterCreator: '' },
-      attrs: { type: 'button' },
-      text: 'Create Vault'
-    })
-  );
-  ctaActions.appendChild(
-    el('button', {
-      className: 'ghost',
-      dataset: { openFaq: '' },
-      attrs: { type: 'button' },
-      text: 'Explore FAQ'
-    })
-  );
-  cta.appendChild(ctaActions);
-  section.appendChild(cta);
-
-  return section;
-};
-
 const buildFaqPage = () => {
   const selectedCategory = getSelectedFaqCategory();
   const section = el('section', { className: 'card faq-page', dataset: { faqPage: '' } });
@@ -2861,14 +2642,6 @@ const buildCreatorHeader = () => {
   const actions = el('div', { className: 'creator__header-actions' });
   actions.appendChild(
     el('button', {
-      className: state.view === 'landing' ? 'primary' : 'ghost',
-      dataset: { viewSwitch: 'landing' },
-      attrs: { type: 'button' },
-      text: 'Landing'
-    })
-  );
-  actions.appendChild(
-    el('button', {
       className: state.view === 'wizard' ? 'primary' : 'ghost',
       dataset: { viewSwitch: 'wizard' },
       attrs: { type: 'button' },
@@ -2905,18 +2678,7 @@ const buildCreatorFooter = () =>
       ]);
 
 const buildApp = () => {
-  const mainClassName = state.view === 'landing' ? 'creator landing-view' : 'creator wizard';
-  const main = el('main', { className: mainClassName });
-
-  if (state.view === 'landing') {
-    main.appendChild(buildLandingPage());
-    const creatorFooter = buildCreatorFooter();
-    if (creatorFooter) {
-      main.appendChild(creatorFooter);
-    }
-    return main;
-  }
-
+  const main = el('main', { className: 'creator wizard' });
   main.appendChild(buildCreatorHeader());
 
   if (state.view === 'faq') {
@@ -2944,22 +2706,10 @@ const render = () => {
   if (!root) return;
   root.replaceChildren(buildApp());
 
-  root.querySelectorAll<HTMLButtonElement>('[data-enter-creator]').forEach((button) => {
-    button.addEventListener('click', () => {
-      setCreatorView('wizard');
-    });
-  });
-
-  root.querySelectorAll<HTMLButtonElement>('[data-open-faq]').forEach((button) => {
-    button.addEventListener('click', () => {
-      setCreatorView('faq');
-    });
-  });
-
   root.querySelectorAll<HTMLButtonElement>('[data-view-switch]').forEach((button) => {
     button.addEventListener('click', () => {
       const targetView = button.dataset.viewSwitch;
-      if (targetView === 'landing' || targetView === 'wizard' || targetView === 'faq') {
+      if (targetView === 'wizard' || targetView === 'faq') {
         setCreatorView(targetView);
       }
     });

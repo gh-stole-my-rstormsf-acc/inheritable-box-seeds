@@ -5,6 +5,10 @@ Self-contained, offline, quantum-resistant HTML vault for Ethereum seed phrases 
 Live app: [GitHub Pages](https://gh-stole-my-rstormsf-acc.github.io/inheritable-box-seeds/)
 Download for offline usage: [Latest standalone HTML](https://github.com/gh-stole-my-rstormsf-acc/inheritable-box-seeds/releases/latest/download/seed-vault-standalone.html)
 
+Build channel split:
+- GitHub Pages build includes landing + creator + FAQ (`#home`, `#create`, `#faq`).
+- Release standalone HTML includes creator + FAQ only (`#create`, `#faq`), with no landing route.
+
 ## Security Model
 
 - **Offline by design**: Generated vault HTML contains all code and data needed to decrypt. No external requests are allowed.
@@ -40,6 +44,12 @@ npm run dev
 
 ```bash
 npm run build
+```
+
+Standalone release artifact build (wizard + FAQ only):
+
+```bash
+npm run build:standalone
 ```
 
 ### Tests
