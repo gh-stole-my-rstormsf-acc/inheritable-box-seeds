@@ -25,13 +25,15 @@ describe('cipher markdown export', () => {
       payload: 'cipher-base64'
     };
 
-    const markdown = buildCiphertextMarkdown(vault);
+    const markdown = buildCiphertextMarkdown(vault, { fileCount: 2, totalFileBytes: 2048 });
 
     expect(markdown).toContain('cipher-base64');
     expect(markdown).toContain('argon2-browser@^1.18.0');
     expect(markdown).toContain('@noble/post-quantum@^0.2.0');
     expect(markdown).toContain('- Argon2 time cost: 4');
     expect(markdown).toContain('npm install argon2-browser@^1.18.0');
+    expect(markdown).toContain('- Attached files: 2');
+    expect(markdown).toContain('- Total attached size: 2.0 KB');
     expect(markdown).not.toContain('@scure/bip39@^1.3.0');
   });
 
@@ -53,12 +55,14 @@ describe('cipher markdown export', () => {
       payload: 'cipher-base64'
     };
 
-    const markdown = buildCiphertextMarkdown(vault);
+    const markdown = buildCiphertextMarkdown(vault, { fileCount: 1, totalFileBytes: 123 });
 
     expect(markdown).toContain('cipher-base64');
     expect(markdown).toContain('@scure/bip39@^1.3.0');
     expect(markdown).toContain('- Shamir threshold (k): 2');
     expect(markdown).toContain('- Share identifiers: share-1, share-2, share-3');
+    expect(markdown).toContain('- Attached files: 1');
+    expect(markdown).toContain('- Total attached size: 123 B');
     expect(markdown).not.toContain('argon2-browser@^1.18.0');
   });
 });

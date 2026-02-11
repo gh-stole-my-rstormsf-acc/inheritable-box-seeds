@@ -16,6 +16,12 @@ Live app: [GitHub Pages](https://gh-stole-my-rstormsf-acc.github.io/inheritable-
 
 ## Usage Notes
 
+- **Wizard order**: `Seeds -> Paths -> Files -> Security -> Finalize`.
+- **Finalize is explicit download-only**: generation does not auto-save files; use:
+  - `Download Seed Vault HTML`
+  - `Download Ciphertext Instructions (.md)`
+- **Optional encrypted file bundle**: Attach exports/backups (KeePass, 1Password, Proton Pass, etc.) in the `Files` step.
+- **Vault view file recovery**: After decrypting the vault HTML, attached files appear in an `Attached Files` table with label, type, size, open hint, and per-file download.
 - **Passphrases are revealable** in the decrypted vault UI (hidden by default, reveal toggle with auto-hide).
 - **Derived addresses are grouped by seed + path + passphrase** in the vault UI.
 - **Shamir shares must include an embedded ID prefix** like `1: <share>`. The vault decryption UI expects this format.
@@ -46,6 +52,12 @@ For faster local branch iteration, run Chromium-only E2E:
 
 ```bash
 npm run test:e2e:chromium
+```
+
+Node roundtrip proof (encrypt/decrypt ciphertext package in both modes):
+
+```bash
+npm run test:node:cipher-roundtrip
 ```
 
 Before pushing to `main`, run the full `npm run test:e2e` suite.

@@ -1,5 +1,10 @@
 import type { Vault } from '../shared/types';
 
+interface CipherMarkdownContext {
+  fileCount?: number;
+  totalFileBytes?: number;
+}
+
 const PASSWORD_LIBS = [
   'argon2-browser@^1.18.0',
   '@noble/post-quantum@^0.2.0',
@@ -15,6 +20,12 @@ const SHAMIR_LIBS = [
 ] as const;
 
 const quoteBlock = (value: string) => `\`\`\`text\n${value}\n\`\`\``;
+
+const formatBytes = (value: number) => {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(2)} MB`;
+};
 
 const buildMetadataLines = (vault: Vault) => {
   const common = [
@@ -63,10 +74,12 @@ const buildDecryptNotes = (vault: Vault) => {
   ];
 };
 
-export const buildCiphertextMarkdown = (vault: Vault) => {
+export const buildCiphertextMarkdown = (vault: Vault, context: CipherMarkdownContext = {}) => {
   const libraries = vault.encryption.type === 'password' ? PASSWORD_LIBS : SHAMIR_LIBS;
   const metadataLines = buildMetadataLines(vault).join('\n');
   const decryptNotes = buildDecryptNotes(vault).map((line) => `- ${line}`).join('\n');
+  const fileCount = context.fileCount ?? 0;
+  const totalFileBytes = context.totalFileBytes ?? 0;
 
   return [
     '# Seed Vault Ciphertext Package',
@@ -79,6 +92,10 @@ export const buildCiphertextMarkdown = (vault: Vault) => {
     '',
     '## Vault Metadata',
     metadataLines,
+    '',
+    '## Encrypted File Bundle',
+    `- Attached files: ${fileCount}`,
+    `- Total attached size: ${formatBytes(totalFileBytes)}`,
     '',
     '## Public Libraries (Pinned Versions)',
     ...libraries.map((library) => `- ${library}`),

@@ -8,6 +8,9 @@ const entrySource = String.raw`
 import assert from 'node:assert/strict';
 import { encryptWithPassword, decryptWithPassword, encryptWithShamir, decryptWithShamir } from './src/shared/crypto/vault';
 
+const sampleFileBytes = Buffer.from('vault-attachment-roundtrip', 'utf8');
+const sampleFileData = sampleFileBytes.toString('base64');
+
 const sampleData = {
   seeds: [
     {
@@ -22,6 +25,16 @@ const sampleData = {
           deriveCount: 2
         }
       ]
+    }
+  ],
+  files: [
+    {
+      label: 'KeePass Backup',
+      fileName: 'vault-backup.kdbx',
+      mimeType: 'application/octet-stream',
+      size: sampleFileBytes.length,
+      openHint: 'Open with KeePassXC',
+      dataBase64: sampleFileData
     }
   ]
 };

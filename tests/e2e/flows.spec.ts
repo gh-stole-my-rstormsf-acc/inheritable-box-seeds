@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { pathToFileURL } from 'url';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 
 const mnemonic = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 const mnemonicAlt = 'legal winner thank year wave sausage worth useful legal winner thank yellow';
@@ -26,7 +26,7 @@ const setNumericInputByLocator = async (locator: any, value: string) => {
   }, value);
 };
 
-const goToStep = async (page: any, step: 'seeds' | 'paths' | 'security' | 'finalize') => {
+const goToStep = async (page: any, step: 'seeds' | 'files' | 'paths' | 'security' | 'finalize') => {
   await page.click(`[data-step-link="${step}"]`);
 };
 
@@ -117,6 +117,41 @@ test('password encryption flow', async ({ page, context }, testInfo) => {
     vaultPage.click('[data-export]')
   ]);
   await csvDownload.saveAs(testInfo.outputPath('addresses.csv'));
+});
+
+test('password encryption flow with attached files', async ({ page, context }, testInfo) => {
+  await page.goto('/');
+  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
+  await goToStep(page, 'files');
+  await page.check('input[data-files-enabled]');
+
+  const sourcePath = testInfo.outputPath('keepass-export.kdbx');
+  const sourceBytes = Buffer.from('demo-keepass-export-data', 'utf8');
+  await writeFile(sourcePath, sourceBytes);
+  await page.setInputFiles('input[data-files-input]', sourcePath);
+
+  await expect(page.locator('.vault-file')).toHaveCount(1);
+  await page.locator('input[data-file-label]').first().fill('Primary Password Export');
+  await page.locator('input[data-file-hint]').first().fill('Open with KeePassXC');
+
+  await goToStep(page, 'paths');
+  await setNumericInput(page, 'input[data-path-count]', '1');
+  await fillPasswordFields(page);
+
+  const vaultPath = await downloadVault(page, testInfo, 'vault-with-files.html');
+  const vaultPage = await decryptVault(context, vaultPath);
+  await expect(vaultPage.locator('[data-files] .vault-files__table')).toHaveCount(1, { timeout: 60000 });
+  await expect(vaultPage.locator('[data-files]')).toContainText('Primary Password Export');
+  await expect(vaultPage.locator('[data-files]')).toContainText('Open with KeePassXC');
+
+  const [download] = await Promise.all([
+    vaultPage.waitForEvent('download'),
+    vaultPage.click('[data-download-vault-file="0"]')
+  ]);
+  const downloadedPath = testInfo.outputPath('decrypted-keepass-export.kdbx');
+  await download.saveAs(downloadedPath);
+  const downloadedBytes = await readFile(downloadedPath);
+  expect(Buffer.compare(downloadedBytes, sourceBytes)).toBe(0);
 });
 
 test('shamir encryption flow', async ({ page, context }, testInfo) => {
@@ -370,7 +405,7 @@ test('add seed does not replace seeds section and preserves in-progress mnemonic
 test('auto-updates path label from preset until manually overridden', async ({ page }) => {
   await page.goto('/');
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
-  await page.click('[data-step-next]');
+  await goToStep(page, 'paths');
 
   const pathLabel = page.locator('input[data-path-label]').first();
   await expect(pathLabel).toHaveValue('[Seed 1] BIP-44 Standard 1');
@@ -386,7 +421,7 @@ test('auto-updates path label from preset until manually overridden', async ({ p
 test('add path does not replace paths section and preserves in-progress field values', async ({ page }) => {
   await page.goto('/');
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
-  await page.click('[data-step-next]');
+  await goToStep(page, 'paths');
 
   await page.fill('input[data-path-label]', 'Draft Label');
   await page.evaluate(() => {
@@ -408,7 +443,7 @@ test('add path does not replace paths section and preserves in-progress field va
 test('disables remove button when a seed has only one path', async ({ page }) => {
   await page.goto('/');
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
-  await page.click('[data-step-next]');
+  await goToStep(page, 'paths');
 
   const singlePathRemove = page.locator('[data-remove-path]').first();
   await expect(singlePathRemove).toBeDisabled();
@@ -440,7 +475,7 @@ test('shows step error near next and clears it after fixing seed input', async (
 test('shows path step error with red field and clears after fix', async ({ page }) => {
   await page.goto('/');
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
-  await page.click('[data-step-next]');
+  await goToStep(page, 'paths');
 
   await page.fill('input[data-path-label]', '');
   await page.click('[data-step-next]');
@@ -451,14 +486,13 @@ test('shows path step error with red field and clears after fix', async ({ page 
   await expect(page.locator('input[data-path-label]').first()).not.toHaveClass(/field-error/);
   await page.click('[data-step-next]');
   await expect(page.locator('[data-step-error]')).toHaveCount(0);
-  await expect(page.locator('[data-step-link="security"]')).toHaveClass(/is-active/);
+  await expect(page.locator('[data-step-link="files"]')).toHaveClass(/is-active/);
 });
 
 test('does not show password error on security step until next is clicked', async ({ page }) => {
   await page.goto('/');
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
-  await page.click('[data-step-next]');
-  await page.click('[data-step-next]');
+  await goToStep(page, 'security');
 
   const passwordInput = page.locator('input[data-password]');
   await expect(passwordInput).not.toHaveClass(/field-error/);

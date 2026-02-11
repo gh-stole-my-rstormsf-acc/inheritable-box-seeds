@@ -37,6 +37,7 @@ export interface ShamirEncryption {
 
 export interface VaultData {
   seeds: SeedEntry[];
+  files?: VaultFileEntry[];
 }
 
 export interface SeedEntry {
@@ -51,6 +52,15 @@ export interface PathConfig {
   passphrase: string;
   passphraseLabel: string;
   deriveCount: number;
+}
+
+export interface VaultFileEntry {
+  label: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  openHint: string;
+  dataBase64: string;
 }
 
 export const isPasswordEncryption = (value: unknown): value is PasswordEncryption => {

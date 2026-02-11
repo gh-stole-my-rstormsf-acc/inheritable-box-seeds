@@ -490,6 +490,61 @@ const STYLE = `
     color: #dff1ff;
     word-break: break-all;
   }
+  .vault-files__empty {
+    margin: 0;
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+  }
+  .vault-files__table-wrap {
+    border: 1px solid rgba(101, 149, 210, 0.34);
+    border-radius: 0.72rem;
+    overflow-x: auto;
+    background: rgba(9, 22, 42, 0.55);
+  }
+  .vault-files__table {
+    width: 100%;
+    min-width: 50rem;
+    border-collapse: collapse;
+  }
+  .vault-files__table th,
+  .vault-files__table td {
+    padding: 0.62rem 0.76rem;
+    border-bottom: 1px solid rgba(101, 149, 210, 0.24);
+    border-right: 1px solid rgba(101, 149, 210, 0.18);
+    text-align: left;
+    vertical-align: top;
+  }
+  .vault-files__table th:last-child,
+  .vault-files__table td:last-child {
+    border-right: none;
+  }
+  .vault-files__table thead th {
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #aec8e8;
+    background: rgba(11, 27, 50, 0.72);
+  }
+  .vault-files__table tbody tr:nth-child(even) {
+    background: rgba(7, 18, 35, 0.36);
+  }
+  .vault-files__table tbody tr:last-child td {
+    border-bottom: none;
+  }
+  .vault-files__label {
+    font-weight: 650;
+    color: #cfe1f8;
+    min-width: 9rem;
+  }
+  .vault-files__hint {
+    min-width: 14rem;
+    color: var(--color-text-muted);
+  }
+  .vault-files__table button {
+    margin-top: 0;
+    padding: 0.32rem 0.64rem;
+    font-size: var(--text-xs);
+  }
   @keyframes vaultReveal {
     from { opacity: 0; transform: translateY(12px); }
     to { opacity: 1; transform: translateY(0); }
@@ -512,6 +567,9 @@ const STYLE = `
     }
     .derived-table {
       min-width: 50rem;
+    }
+    .vault-files__table {
+      min-width: 44rem;
     }
     .derived-table code {
       white-space: normal;
