@@ -26,8 +26,41 @@ const setNumericInputByLocator = async (locator: any, value: string) => {
   }, value);
 };
 
+const STEP_SEQUENCE = ['seeds', 'paths', 'files', 'security', 'finalize'] as const;
+type StepId = (typeof STEP_SEQUENCE)[number];
+
+const getActiveStep = async (page: any): Promise<StepId> => {
+  const active = page.locator('.wizard-step.is-active');
+  const stepId = await active.getAttribute('data-step-link');
+  if (!stepId || !STEP_SEQUENCE.includes(stepId as StepId)) {
+    throw new Error(`Unable to read active wizard step. Received: ${stepId ?? 'null'}`);
+  }
+  return stepId as StepId;
+};
+
 const goToStep = async (page: any, step: 'seeds' | 'files' | 'paths' | 'security' | 'finalize') => {
-  await page.click(`[data-step-link="${step}"]`);
+  const targetIndex = STEP_SEQUENCE.indexOf(step as StepId);
+  if (targetIndex < 0) throw new Error(`Unknown target step: ${step}`);
+
+  for (let guard = 0; guard < STEP_SEQUENCE.length * 2; guard += 1) {
+    const current = await getActiveStep(page);
+    if (current === step) return;
+
+    const currentIndex = STEP_SEQUENCE.indexOf(current);
+    if (currentIndex < targetIndex) {
+      const next = page.locator('[data-step-next]');
+      await expect(next).toBeVisible();
+      await expect(next).toBeEnabled();
+      await next.click();
+    } else {
+      const prev = page.locator('[data-step-prev]');
+      await expect(prev).toBeVisible();
+      await expect(prev).toBeEnabled();
+      await prev.click();
+    }
+  }
+
+  throw new Error(`Failed to reach step "${step}" from wizard navigation controls.`);
 };
 
 const addPathToSeedIndex = async (page: any, seedIndex: number) => {
@@ -440,6 +473,47 @@ test('add path does not replace paths section and preserves in-progress field va
   await expect(page.locator('input[data-path-label]').first()).toHaveValue('Draft Label');
 });
 
+test('changing path preset does not replace paths section', async ({ page }) => {
+  await page.goto('/');
+  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
+  await goToStep(page, 'paths');
+
+  await page.evaluate(() => {
+    (window as Window & { __pathsSectionRef?: Element | null }).__pathsSectionRef =
+      document.querySelector('[data-paths-section]');
+  });
+
+  await page.selectOption('select[data-path-preset]', 'ledger-legacy');
+  const sameSectionAfterPresetChange = await page.evaluate(
+    () =>
+      (window as Window & { __pathsSectionRef?: Element | null }).__pathsSectionRef ===
+      document.querySelector('[data-paths-section]')
+  );
+  expect(sameSectionAfterPresetChange).toBe(true);
+  await expect(page.locator('input[data-path-label]').first()).toHaveValue('[Seed 1] Ledger Legacy 1');
+});
+
+test('changing security preset does not replace security section', async ({ page }) => {
+  await page.goto('/');
+  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
+  await goToStep(page, 'security');
+
+  await page.evaluate(() => {
+    (window as Window & { __securitySectionRef?: Element | null }).__securitySectionRef =
+      document.querySelector('.wizard-card');
+  });
+
+  await page.selectOption('[data-argon-preset]', 'custom');
+  const sameSectionAfterPresetChange = await page.evaluate(
+    () =>
+      (window as Window & { __securitySectionRef?: Element | null }).__securitySectionRef ===
+      document.querySelector('.wizard-card')
+  );
+  expect(sameSectionAfterPresetChange).toBe(true);
+  await expect(page.locator('[data-argon-custom]')).toBeVisible();
+  await expect(page.locator('[data-argon-preset-hint]')).toBeHidden();
+});
+
 test('disables remove button when a seed has only one path', async ({ page }) => {
   await page.goto('/');
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
@@ -457,6 +531,21 @@ test('disables remove button when a seed has only one path', async ({ page }) =>
   await page.locator('[data-remove-path]').nth(1).click();
   await expect(page.locator('[data-remove-path]')).toHaveCount(1);
   await expect(page.locator('[data-remove-path]').first()).toBeDisabled();
+});
+
+test('wizard step badges are non-interactive representation only', async ({ page }) => {
+  await page.goto('/');
+  const stepButtons = page.locator('[data-step-link]');
+  await expect(stepButtons).toHaveCount(5);
+
+  const total = await stepButtons.count();
+  for (let index = 0; index < total; index += 1) {
+    await expect(stepButtons.nth(index)).toBeDisabled();
+  }
+
+  await expect(page.locator('[data-step-link="seeds"]')).toHaveClass(/is-active/);
+  await expect(page.click('[data-step-link="paths"]', { timeout: 1000 })).rejects.toThrow();
+  await expect(page.locator('[data-step-link="seeds"]')).toHaveClass(/is-active/);
 });
 
 test('shows step error near next and clears it after fixing seed input', async ({ page }) => {
@@ -505,6 +594,33 @@ test('does not show password error on security step until next is clicked', asyn
   await expect(passwordInput).not.toHaveClass(/field-error/);
 });
 
+test('password reveal toggle shows both fields and confirmation mismatch blocks next', async ({ page }) => {
+  await page.goto('/');
+  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
+  await goToStep(page, 'security');
+
+  const passwordInput = page.locator('input[data-password]');
+  const confirmInput = page.locator('input[data-confirm]');
+  await expect(passwordInput).toHaveAttribute('type', 'password');
+  await expect(confirmInput).toHaveAttribute('type', 'password');
+
+  await passwordInput.fill('ValidPassword123!');
+  await confirmInput.fill('DifferentPassword123!');
+  await page.check('input[data-password-visibility]');
+
+  await expect(passwordInput).toHaveAttribute('type', 'text');
+  await expect(confirmInput).toHaveAttribute('type', 'text');
+
+  await page.click('[data-step-next]');
+  await expect(page.locator('[data-step-error]')).toContainText(/confirmation does not match/i);
+  await expect(confirmInput).toHaveClass(/field-error/);
+
+  await confirmInput.fill('ValidPassword123!');
+  await expect(confirmInput).not.toHaveClass(/field-error/);
+  await page.click('[data-step-next]');
+  await expect(page.locator('[data-step-link="finalize"]')).toHaveClass(/is-active/);
+});
+
 test('shamir mode shows generate button and renders shares after generate', async ({ page }, testInfo) => {
   await page.goto('/');
   await generateVault(page);
@@ -542,4 +658,55 @@ test('shamir mode shows generate button and renders shares after generate', asyn
 
   await expect(page.locator('.shares h3')).toHaveText(/Shamir Shares/i);
   await expect(page.locator('.share')).toHaveCount(3);
+});
+
+test('creator FAQ view toggles from header and renders category accordion', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('[data-faq-page]')).toHaveCount(0);
+
+  await page.click('[data-view-switch="faq"]');
+  await expect(page.locator('[data-faq-page]')).toHaveCount(1);
+  await expect.poll(() => page.evaluate(() => window.location.hash)).toBe('#faq');
+
+  const categoryButtons = page.locator('[data-faq-category]');
+  expect(await categoryButtons.count()).toBeGreaterThanOrEqual(8);
+  await expect(page.locator('[data-faq-entry-toggle]').first()).toBeVisible();
+
+  const firstEntryId = await page.locator('[data-faq-entry-toggle]').first().getAttribute('data-faq-entry-toggle');
+  expect(firstEntryId).not.toBeNull();
+  const answer = page.locator(`[data-faq-entry-answer="${firstEntryId!}"]`);
+  await expect(answer).toBeHidden();
+  await page.locator('[data-faq-entry-toggle]').first().click();
+  await expect(answer).toBeVisible();
+
+  await categoryButtons.nth(1).click();
+  await expect(page.locator('[data-faq-entry-toggle]').first()).toBeVisible();
+});
+
+test('switching between creator and FAQ preserves in-progress wizard state', async ({ page }) => {
+  await page.goto('/');
+  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
+  await goToStep(page, 'paths');
+  await page.fill('input[data-path-label]', 'State Preservation Path');
+  await expect(page.locator('[data-step-link="paths"]')).toHaveClass(/is-active/);
+
+  await page.click('[data-view-switch="faq"]');
+  await expect(page.locator('[data-faq-page]')).toHaveCount(1);
+
+  await page.click('[data-view-switch="wizard"]');
+  await expect.poll(() => page.evaluate(() => window.location.hash)).toBe('#create');
+  await expect(page.locator('[data-step-link="paths"]')).toHaveClass(/is-active/);
+  await expect(page.locator('input[data-path-label]').first()).toHaveValue('State Preservation Path');
+});
+
+test('generated vault HTML does not include creator FAQ page markup', async ({ page }, testInfo) => {
+  await page.goto('/');
+  await generateVault(page);
+  await fillPasswordFields(page);
+  const vaultPath = await downloadVault(page, testInfo, 'vault-no-faq-markup.html');
+
+  const vaultHtml = await readFile(vaultPath, 'utf8');
+  expect(vaultHtml).not.toContain('Creator FAQ');
+  expect(vaultHtml).not.toContain('data-faq-page');
+  expect(vaultHtml).not.toContain('data-view-switch');
 });
