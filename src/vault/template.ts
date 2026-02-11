@@ -301,52 +301,113 @@ const STYLE = `
   }
   .path {
     display: grid;
-    grid-template-columns: 1.6fr 1fr;
+    grid-template-columns: minmax(0, 1.35fr) minmax(18rem, 1fr);
     gap: var(--space-4);
-    padding: var(--space-4);
+    padding: 1rem 1.05rem;
     border-radius: var(--radius-sm);
-    border: 1px dashed rgba(111, 158, 219, 0.36);
-    background: rgba(7, 18, 36, 0.42);
+    border: 1px solid rgba(114, 166, 230, 0.36);
+    background:
+      radial-gradient(circle at 100% 0%, rgba(39, 119, 214, 0.14), transparent 48%),
+      linear-gradient(145deg, rgba(8, 22, 44, 0.78), rgba(8, 19, 38, 0.7));
+    box-shadow: inset 0 0 0 1px rgba(71, 123, 191, 0.18);
   }
-  .path p {
-    margin: var(--space-2) 0 0;
-    color: var(--color-text-muted);
-    font-size: var(--text-sm);
+  .path__info {
+    min-width: 0;
+    display: grid;
+    align-content: start;
+    gap: 0.62rem;
+  }
+  .path__title {
+    margin: 0;
+    font-size: clamp(1rem, 1vw, 1.18rem);
+    line-height: 1.2;
+    color: #deecff;
+  }
+  .path__value {
+    margin: 0;
+    width: fit-content;
+    max-width: 100%;
+    padding: 0.38rem 0.56rem;
+    border-radius: 0.62rem;
+    border: 1px solid rgba(117, 168, 231, 0.3);
+    background: rgba(6, 19, 38, 0.6);
+    color: #aac3e0;
+    font-size: 0.98rem;
+    font-family: "IBM Plex Mono", "JetBrains Mono", "Fira Code", monospace;
+    line-height: 1.3;
     word-break: break-all;
   }
   .meta {
     display: grid;
-    gap: 0.35rem;
-    justify-items: end;
-    align-content: start;
+    gap: 0.52rem;
+    justify-items: stretch;
+    align-content: stretch;
     color: #aac2df;
     font-size: var(--text-sm);
+    min-width: 0;
   }
   .passphrase {
     width: 100%;
     display: grid;
-    gap: 0.3rem;
-    padding: 0.36rem 0.48rem;
-    border-radius: 0.65rem;
-    border: 1px solid rgba(101, 152, 219, 0.35);
-    background: rgba(6, 16, 33, 0.56);
+    gap: 0.45rem;
+    padding: 0.52rem 0.58rem;
+    border-radius: 0.72rem;
+    border: 1px solid rgba(113, 171, 238, 0.44);
+    background:
+      radial-gradient(circle at 100% 50%, rgba(25, 90, 168, 0.22), transparent 52%),
+      linear-gradient(148deg, rgba(7, 20, 42, 0.8), rgba(5, 15, 31, 0.74));
   }
-  .passphrase__header {
+  .passphrase__topline {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
-    font-size: var(--text-xs);
+    gap: 0.46rem;
+    flex-wrap: wrap;
+    min-width: 0;
   }
-  .passphrase__header button {
-    margin-top: 0;
-    padding: 0.28rem 0.56rem;
+  .passphrase__label-key {
     font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #84abda;
+    white-space: nowrap;
   }
-  .passphrase__label {
+  .passphrase__label-value {
     margin: 0;
-    color: var(--color-text-muted);
+    max-width: 100%;
+    padding: 0.22rem 0.5rem;
+    border-radius: var(--radius-pill);
+    border: 1px solid rgba(125, 180, 243, 0.4);
+    background: rgba(17, 48, 84, 0.5);
+    color: #e4f1ff;
     font-size: var(--text-xs);
+    line-height: 1.2;
+    word-break: break-word;
+  }
+  .passphrase__topline button {
+    margin-top: 0;
+    margin-left: auto;
+    padding: 0.24rem 0.62rem;
+    font-size: var(--text-xs);
+    border-color: rgba(125, 184, 249, 0.58);
+    background: rgba(26, 65, 108, 0.82);
+    color: #e6f4ff;
+  }
+  .passphrase .secret--compact {
+    margin-top: 0;
+    padding: 0.44rem 0.56rem;
+    border-color: rgba(118, 171, 236, 0.34);
+    background: rgba(6, 18, 35, 0.72);
+    color: #d5e8ff;
+  }
+  .path__count {
+    margin-top: auto;
+    justify-self: end;
+    color: #b7cff0;
+    font-size: var(--text-sm);
+  }
+  .path__none {
+    color: #8ea9cb;
+    font-size: var(--text-sm);
   }
   .derived-table-wrap {
     margin-top: var(--space-2);
@@ -441,7 +502,13 @@ const STYLE = `
       gap: var(--space-3);
     }
     .meta {
-      justify-items: start;
+      justify-items: stretch;
+    }
+    .path__value {
+      width: 100%;
+    }
+    .path__count {
+      justify-self: start;
     }
     .derived-table {
       min-width: 50rem;

@@ -327,6 +327,9 @@ test('password encryption flow with 2 seeds and 2 paths each', async ({ page, co
   const vaultPage = await decryptVault(context, vaultPath);
   await expect(vaultPage.locator('[data-seeds] .vault-seed')).toHaveCount(2, { timeout: 60000 });
   await expect(vaultPage.locator('[data-seeds] .passphrase [data-reveal]')).toHaveCount(4);
+  await expect(vaultPage.locator('[data-seeds] .passphrase__label-key')).toHaveCount(4);
+  await expect(vaultPage.locator('[data-seeds] .passphrase__label-key').first()).toHaveText('Passphrase Label');
+  await expect(vaultPage.locator('[data-seeds] .passphrase__label-value').first()).toHaveText('Seed One A');
 
   await vaultPage.click('[data-derive]');
   await expect(vaultPage.locator('[data-derived] .derived-table')).toHaveCount(1);
