@@ -3,6 +3,7 @@ import { validateBip39Mnemonic, normalizeMnemonic } from './validation/mnemonic'
 import { validateHdPathTemplate } from './validation/hdPath';
 import { encryptWithPassword, encryptWithShamir } from '../shared/crypto/vault';
 import { buildVaultHtml } from '../vault/template';
+import { buildCiphertextMarkdown } from './cipherMarkdown';
 import { formatShareHex, formatShareMnemonic } from '../shared/crypto/shamir';
 import type { VaultData } from '../shared/types';
 import { deriveKeyArgon2Worker } from './crypto/argon2Worker';
@@ -48,12 +49,14 @@ interface EncryptionState {
 
 interface GeneratedState {
   vaultHtml: string;
+  cipherMd: string;
   shares: Array<{ id: number; words: string; hex: string }>;
 }
 
 interface PreparedShamirState {
   fingerprint: string;
   vaultHtml: string;
+  cipherMd: string;
   shares: Array<{ id: number; words: string; hex: string }>;
 }
 
@@ -84,7 +87,7 @@ const WIZARD_STEPS: WizardStep[] = [
   {
     id: 'finalize',
     title: 'Finalize',
-    subtitle: 'Generate and download vault'
+    subtitle: 'Generate vault and download files'
   }
 ];
 
@@ -308,8 +311,8 @@ const passwordStrength = (password: string) => {
   return score;
 };
 
-const downloadFile = (content: string, filename: string) => {
-  const blob = new Blob([content], { type: 'text/html' });
+const downloadFile = (content: string, filename: string, mimeType: string) => {
+  const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
@@ -849,25 +852,24 @@ const handleGenerate = async () => {
         onProgress
       });
       const html = buildVaultHtml(vault);
-      const filename = `seed-vault-${md5Hex(html)}.html`;
-      downloadFile(html, filename);
+      const cipherMd = buildCiphertextMarkdown(vault);
       state.generated = {
         vaultHtml: html,
+        cipherMd,
         shares: []
       };
-      setStatus('Vault generated and downloaded. Record your password.', 'info');
+      setStatus('Vault generated. Use the download buttons below.', 'info');
     } else {
       const prepared = hasPreparedShamirForCurrentState() ? state.preparedShamir : undefined;
       if (!prepared) {
         throw new Error('Generate and review Shamir shares in Step 3 before finalizing.');
       }
-      const filename = `seed-vault-${md5Hex(prepared.vaultHtml)}.html`;
-      downloadFile(prepared.vaultHtml, filename);
       state.generated = {
         vaultHtml: prepared.vaultHtml,
+        cipherMd: prepared.cipherMd,
         shares: prepared.shares
       };
-      setStatus('Vault generated and downloaded. Record your shares.', 'info');
+      setStatus('Vault generated. Use the download buttons below.', 'info');
     }
     clearSensitiveState();
   } catch (error) {
@@ -877,6 +879,26 @@ const handleGenerate = async () => {
     state.progress = 0;
     render();
   }
+};
+
+const handleDownloadVaultHtml = () => {
+  if (!state.generated) {
+    setStatus('Generate a vault first.', 'error');
+    return;
+  }
+  const filename = `seed-vault-${md5Hex(state.generated.vaultHtml)}.html`;
+  downloadFile(state.generated.vaultHtml, filename, 'text/html');
+  setStatus('Seed vault HTML download started.', 'info');
+};
+
+const handleDownloadCipherMd = () => {
+  if (!state.generated) {
+    setStatus('Generate a vault first.', 'error');
+    return;
+  }
+  const filename = `seed-vault-cipher-${md5Hex(state.generated.cipherMd)}.md`;
+  downloadFile(state.generated.cipherMd, filename, 'text/markdown');
+  setStatus('Ciphertext markdown download started.', 'info');
 };
 
 const buildWizardStepper = () => {
@@ -902,9 +924,61 @@ const buildWizardStepper = () => {
   return nav;
 };
 
+const buildSeedCard = (seed: SeedForm, seedIndex: number, fieldErrors: FieldErrorState) => {
+  const seedEl = el('div', { className: 'seed', dataset: { seed: seed.id } });
+  seedEl.appendChild(
+    el('div', { className: 'seed__header' }, [
+      el('h3', { text: `Seed ${seedIndex + 1}` }),
+      el('button', { dataset: { removeSeed: seed.id }, text: 'Remove' })
+    ])
+  );
+
+  seedEl.appendChild(el('label', { text: 'Label' }));
+  seedEl.appendChild(
+    el('input', {
+      className: hasFieldError(fieldErrors, 'seedLabel', seed.id) ? 'field-error' : undefined,
+      type: 'text',
+      dataset: { seedLabel: seed.id },
+      value: seed.label
+    })
+  );
+
+  seedEl.appendChild(el('label', { text: 'Mnemonic (BIP-39)' }));
+  const mnemonicStatus = validateBip39Mnemonic(seed.mnemonic);
+  const showMnemonicValidation = state.seedValidationArmed || seed.mnemonic.trim().length > 0;
+  seedEl.appendChild(
+    el('textarea', {
+      className: showMnemonicValidation && !mnemonicStatus.valid ? 'field-error' : undefined,
+      dataset: { seedMnemonic: seed.id },
+      placeholder: '12, 18, or 24 lowercase words',
+      value: seed.mnemonic
+    })
+  );
+
+  seedEl.appendChild(
+    el('p', {
+      className: `helper ${showMnemonicValidation ? (mnemonicStatus.valid ? 'ok' : 'error') : ''}`,
+      dataset: { seedMnemonicStatus: seed.id },
+      text: !showMnemonicValidation
+        ? 'Enter 12, 18, or 24 words.'
+        : mnemonicStatus.valid
+          ? `Checksum valid (${mnemonicStatus.wordCount} words)`
+          : mnemonicStatus.error ?? ''
+    })
+  );
+  seedEl.appendChild(
+    el('p', {
+      className: 'helper',
+      dataset: { seedPathCount: seed.id },
+      text: `${seed.paths.length} path${seed.paths.length === 1 ? '' : 's'} configured`
+    })
+  );
+  return seedEl;
+};
+
 const buildSeedsSection = () => {
   const fieldErrors = collectFieldErrors();
-  const section = el('section', { className: 'card wizard-card' });
+  const section = el('section', { className: 'card wizard-card', dataset: { seedsSection: '' } });
   section.appendChild(
     el('div', { className: 'card__header' }, [
       el('div', {}, [el('h2', { text: 'Step 1: Add Seed Phrases' }), el('p', { className: 'helper', text: 'Add one or more mnemonics first. You will configure paths in the next step.' })]),
@@ -912,58 +986,97 @@ const buildSeedsSection = () => {
     ])
   );
 
-  const body = el('div', { className: 'card__body' });
+  const body = el('div', { className: 'card__body', dataset: { seedsBody: '' } });
   state.seeds.forEach((seed, seedIndex) => {
-    const seedEl = el('div', { className: 'seed' });
-    seedEl.appendChild(
-      el('div', { className: 'seed__header' }, [
-        el('h3', { text: `Seed ${seedIndex + 1}` }),
-        el('button', { dataset: { removeSeed: seed.id }, text: 'Remove' })
-      ])
-    );
-
-    seedEl.appendChild(el('label', { text: 'Label' }));
-    seedEl.appendChild(
-      el('input', {
-        className: hasFieldError(fieldErrors, 'seedLabel', seed.id) ? 'field-error' : undefined,
-        type: 'text',
-        dataset: { seedLabel: seed.id },
-        value: seed.label
-      })
-    );
-
-    seedEl.appendChild(el('label', { text: 'Mnemonic (BIP-39)' }));
-    const mnemonicStatus = validateBip39Mnemonic(seed.mnemonic);
-    const showMnemonicValidation = state.seedValidationArmed || seed.mnemonic.trim().length > 0;
-    seedEl.appendChild(
-      el('textarea', {
-        className: showMnemonicValidation && !mnemonicStatus.valid ? 'field-error' : undefined,
-        dataset: { seedMnemonic: seed.id },
-        placeholder: '12, 18, or 24 lowercase words',
-        value: seed.mnemonic
-      })
-    );
-
-    seedEl.appendChild(
-      el('p', {
-        className: `helper ${showMnemonicValidation ? (mnemonicStatus.valid ? 'ok' : 'error') : ''}`,
-        text: !showMnemonicValidation
-          ? 'Enter 12, 18, or 24 words.'
-          : mnemonicStatus.valid
-            ? `Checksum valid (${mnemonicStatus.wordCount} words)`
-            : mnemonicStatus.error ?? ''
-      })
-    );
-    seedEl.appendChild(
-      el('p', {
-        className: 'helper',
-        text: `${seed.paths.length} path${seed.paths.length === 1 ? '' : 's'} configured`
-      })
-    );
-    body.appendChild(seedEl);
+    body.appendChild(buildSeedCard(seed, seedIndex, fieldErrors));
   });
   section.appendChild(body);
   return section;
+};
+
+const syncSeedFieldErrorUI = (seedId: string) => {
+  if (state.currentStep !== 'seeds') return;
+  const seed = state.seeds.find((item) => item.id === seedId);
+  if (!seed) return;
+
+  const fieldErrors = collectFieldErrors();
+  const labelInput = document.querySelector<HTMLInputElement>(`[data-seed-label="${seedId}"]`);
+  if (labelInput) {
+    labelInput.classList.toggle('field-error', hasFieldError(fieldErrors, 'seedLabel', seedId));
+  }
+
+  const mnemonicInput = document.querySelector<HTMLTextAreaElement>(`[data-seed-mnemonic="${seedId}"]`);
+  const mnemonicStatus = validateBip39Mnemonic(seed.mnemonic);
+  const showMnemonicValidation = state.seedValidationArmed || seed.mnemonic.trim().length > 0;
+  if (mnemonicInput) {
+    mnemonicInput.classList.toggle('field-error', showMnemonicValidation && !mnemonicStatus.valid);
+  }
+
+  const mnemonicStatusEl = document.querySelector<HTMLParagraphElement>(`[data-seed-mnemonic-status="${seedId}"]`);
+  if (mnemonicStatusEl) {
+    mnemonicStatusEl.textContent = !showMnemonicValidation
+      ? 'Enter 12, 18, or 24 words.'
+      : mnemonicStatus.valid
+        ? `Checksum valid (${mnemonicStatus.wordCount} words)`
+        : mnemonicStatus.error ?? '';
+    mnemonicStatusEl.classList.toggle('ok', showMnemonicValidation && mnemonicStatus.valid);
+    mnemonicStatusEl.classList.toggle('error', showMnemonicValidation && !mnemonicStatus.valid);
+  }
+
+  const pathCountEl = document.querySelector<HTMLParagraphElement>(`[data-seed-path-count="${seedId}"]`);
+  if (pathCountEl) {
+    pathCountEl.textContent = `${seed.paths.length} path${seed.paths.length === 1 ? '' : 's'} configured`;
+  }
+};
+
+const syncAllSeedFieldErrorUI = () => {
+  if (state.currentStep !== 'seeds') return;
+  state.seeds.forEach((seed) => syncSeedFieldErrorUI(seed.id));
+};
+
+const bindSeedFieldListeners = (scope: ParentNode) => {
+  scope.querySelectorAll<HTMLButtonElement>('[data-remove-seed]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.seeds = state.seeds.filter((seed) => seed.id !== btn.dataset.removeSeed);
+      if (state.seeds.length === 0) state.seeds.push(createSeed(0));
+      invalidateShamirPreparation();
+      render();
+    });
+  });
+
+  scope.querySelectorAll<HTMLInputElement>('[data-seed-label]').forEach((input) => {
+    input.addEventListener('input', () => {
+      const seed = state.seeds.find((s) => s.id === input.dataset.seedLabel);
+      if (seed) seed.label = input.value;
+      invalidateShamirPreparation();
+      syncAllSeedFieldErrorUI();
+    });
+  });
+
+  scope.querySelectorAll<HTMLTextAreaElement>('[data-seed-mnemonic]').forEach((input) => {
+    input.addEventListener('input', () => {
+      const seed = state.seeds.find((s) => s.id === input.dataset.seedMnemonic);
+      if (seed) {
+        seed.mnemonic = input.value;
+        seed.paths.forEach((path) => schedulePreview(seed, path));
+      }
+      invalidateShamirPreparation();
+      if (seed) syncSeedFieldErrorUI(seed.id);
+    });
+  });
+};
+
+const appendSeedCard = (seed: SeedForm) => {
+  if (state.currentStep !== 'seeds') return false;
+  const seedsBody = document.querySelector<HTMLElement>('[data-seeds-body]');
+  if (!seedsBody) return false;
+
+  const fieldErrors = collectFieldErrors();
+  const seedIndex = state.seeds.findIndex((item) => item.id === seed.id);
+  const seedEl = buildSeedCard(seed, seedIndex >= 0 ? seedIndex : state.seeds.length - 1, fieldErrors);
+  seedsBody.appendChild(seedEl);
+  bindSeedFieldListeners(seedEl);
+  return true;
 };
 
 const setRemovePathButtonState = (button: HTMLButtonElement, pathCountForSeed: number) => {
@@ -1419,9 +1532,11 @@ const prepareShamirShares = () => {
       hint: state.encryption.hint.trim() || undefined
     });
     const vaultHtml = buildVaultHtml(vault);
+    const cipherMd = buildCiphertextMarkdown(vault);
     state.preparedShamir = {
       fingerprint: buildShamirFingerprint(data),
       vaultHtml,
+      cipherMd,
       shares: shares.map((share) => ({
         id: share.id,
         words: formatShareMnemonic(share),
@@ -1649,7 +1764,7 @@ const buildFinalizeSection = () => {
     el('div', { className: 'card__header' }, [
       el('div', {}, [
         el('h2', { text: 'Step 4: Finalize Vault' }),
-        el('p', { className: 'helper', text: 'Review status, then generate a self-contained offline vault file.' })
+        el('p', { className: 'helper', text: 'Generate vault artifacts, then explicitly download HTML and ciphertext instructions.' })
       ])
     ])
   );
@@ -1673,6 +1788,22 @@ const buildFinalizeSection = () => {
       text: state.isGenerating ? 'Generating...' : 'Generate Vault'
     })
   );
+
+  const downloadActions = el('div', { className: 'finalize-downloads' }, [
+    el('button', {
+      className: 'primary',
+      dataset: { downloadVaultHtml: '' },
+      disabled: !state.generated || state.isGenerating,
+      text: 'Download Seed Vault HTML'
+    }),
+    el('button', {
+      className: 'ghost',
+      dataset: { downloadCipherMd: '' },
+      disabled: !state.generated || state.isGenerating,
+      text: 'Download Ciphertext Instructions (.md)'
+    })
+  ]);
+  section.appendChild(downloadActions);
 
   const progress = el('div', { className: 'progress', hidden: !state.isGenerating });
   const bar = el('div', { className: 'bar', attrs: { style: `width: ${Math.round(state.progress * 100)}%` } });
@@ -1773,39 +1904,17 @@ const render = () => {
   });
 
   root.querySelector<HTMLButtonElement>('[data-add-seed]')?.addEventListener('click', () => {
-    state.seeds.push(createSeed(state.seeds.length));
+    const seed = createSeed(state.seeds.length);
+    state.seeds.push(seed);
     invalidateShamirPreparation();
-    render();
-  });
-
-  root.querySelectorAll<HTMLButtonElement>('[data-remove-seed]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      state.seeds = state.seeds.filter((seed) => seed.id !== btn.dataset.removeSeed);
-      if (state.seeds.length === 0) state.seeds.push(createSeed(0));
-      invalidateShamirPreparation();
+    const appended = appendSeedCard(seed);
+    if (!appended) {
       render();
-    });
+      return;
+    }
+    syncAllSeedFieldErrorUI();
   });
-
-  root.querySelectorAll<HTMLInputElement>('[data-seed-label]').forEach((input) => {
-    input.addEventListener('input', () => {
-      const seed = state.seeds.find((s) => s.id === input.dataset.seedLabel);
-      if (seed) seed.label = input.value;
-      invalidateShamirPreparation();
-    });
-  });
-
-  root.querySelectorAll<HTMLTextAreaElement>('[data-seed-mnemonic]').forEach((input) => {
-    input.addEventListener('input', () => {
-      const seed = state.seeds.find((s) => s.id === input.dataset.seedMnemonic);
-      if (seed) seed.mnemonic = input.value;
-      if (seed) {
-        seed.paths.forEach((path) => schedulePreview(seed, path));
-      }
-      invalidateShamirPreparation();
-      render();
-    });
-  });
+  bindSeedFieldListeners(root);
 
   root.querySelectorAll<HTMLButtonElement>('[data-add-path-seed]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -1911,6 +2020,8 @@ const render = () => {
   });
 
   root.querySelector<HTMLButtonElement>('[data-generate]')?.addEventListener('click', handleGenerate);
+  root.querySelector<HTMLButtonElement>('[data-download-vault-html]')?.addEventListener('click', handleDownloadVaultHtml);
+  root.querySelector<HTMLButtonElement>('[data-download-cipher-md]')?.addEventListener('click', handleDownloadCipherMd);
 
   root.querySelectorAll<HTMLInputElement>('input[name="share-display"]').forEach((input) => {
     input.addEventListener('change', () => {

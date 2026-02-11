@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { pathToFileURL } from 'url';
+import { readFile } from 'node:fs/promises';
 
 const mnemonic = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 const mnemonicAlt = 'legal winner thank year wave sausage worth useful legal winner thank yellow';
@@ -56,7 +57,9 @@ const fillPasswordFields = async (page: any, password = longPassword) => {
 
 const downloadVault = async (page: any, testInfo: any, filename: string) => {
   await goToStep(page, 'finalize');
-  const [download] = await Promise.all([page.waitForEvent('download'), page.click('[data-generate]')]);
+  await page.click('[data-generate]');
+  await expect(page.locator('[data-download-vault-html]')).toBeEnabled();
+  const [download] = await Promise.all([page.waitForEvent('download'), page.click('[data-download-vault-html]')]);
   const vaultPath = testInfo.outputPath(filename);
   await download.saveAs(vaultPath);
   return vaultPath;
@@ -82,6 +85,25 @@ test('password encryption flow', async ({ page, context }, testInfo) => {
   await fillPasswordFields(page);
 
   const vaultPath = await downloadVault(page, testInfo, 'vault-password.html');
+  const [cipherDownload] = await Promise.all([
+    page.waitForEvent('download'),
+    page.click('[data-download-cipher-md]')
+  ]);
+  const cipherPath = testInfo.outputPath('cipher-password.md');
+  await cipherDownload.saveAs(cipherPath);
+  const cipherMd = await readFile(cipherPath, 'utf8');
+  expect(cipherMd).toContain('## Ciphertext (base64)');
+  expect(cipherMd).toContain('argon2-browser@^1.18.0');
+  expect(cipherMd).toContain('@noble/post-quantum@^0.2.0');
+
+  const passwordVaultHtml = await readFile(vaultPath, 'utf8');
+  expect(passwordVaultHtml).toContain('VAULT_RUNTIME_MODE: password-only');
+  expect(passwordVaultHtml).not.toContain('Printable Ciphertext');
+  expect(passwordVaultHtml).not.toContain('PRINT_THIS_CIPHERTEXT_BASE64');
+  expect(passwordVaultHtml).not.toContain('data-ciphertext-print');
+  expect(passwordVaultHtml).toContain('argon2.wasm');
+  expect(passwordVaultHtml).not.toContain('Share must include id prefix like "1: <share>".');
+
   const vaultPage = await decryptVault(context, vaultPath);
   await expect(vaultPage.locator('[data-seeds] .vault-seed')).toHaveCount(1, { timeout: 60000 });
 
@@ -106,10 +128,16 @@ test('shamir encryption flow', async ({ page, context }, testInfo) => {
   await page.fill('input[data-total]', '3');
   await prepareShamirShares(page);
   await goToStep(page, 'finalize');
+  await page.click('[data-generate]');
+  await expect(page.locator('[data-download-vault-html]')).toBeEnabled();
 
-  const [download] = await Promise.all([
+  const [htmlDownload] = await Promise.all([
     page.waitForEvent('download'),
-    page.click('[data-generate]')
+    page.click('[data-download-vault-html]')
+  ]);
+  const [cipherDownload] = await Promise.all([
+    page.waitForEvent('download'),
+    page.click('[data-download-cipher-md]')
   ]);
 
   const shareBlocks = page.locator('.share');
@@ -121,7 +149,21 @@ test('shamir encryption flow', async ({ page, context }, testInfo) => {
   }
 
   const vaultPath = testInfo.outputPath('vault-shamir.html');
-  await download.saveAs(vaultPath);
+  await htmlDownload.saveAs(vaultPath);
+  const cipherPath = testInfo.outputPath('cipher-shamir.md');
+  await cipherDownload.saveAs(cipherPath);
+  const cipherMd = await readFile(cipherPath, 'utf8');
+  expect(cipherMd).toContain('## Ciphertext (base64)');
+  expect(cipherMd).toContain('@scure/bip39@^1.3.0');
+  expect(cipherMd).not.toContain('argon2-browser@^1.18.0');
+
+  const shamirVaultHtml = await readFile(vaultPath, 'utf8');
+  expect(shamirVaultHtml).toContain('VAULT_RUNTIME_MODE: shamir-only');
+  expect(shamirVaultHtml).not.toContain('Printable Ciphertext');
+  expect(shamirVaultHtml).not.toContain('PRINT_THIS_CIPHERTEXT_BASE64');
+  expect(shamirVaultHtml).not.toContain('data-ciphertext-print');
+  expect(shamirVaultHtml).toContain('Share must include id prefix like "1: <share>".');
+  expect(shamirVaultHtml).not.toContain('argon2.wasm');
 
   const vaultPage = await context.newPage();
   await vaultPage.goto(pathToFileURL(vaultPath).toString());
@@ -302,6 +344,26 @@ test('assigns default seed labels by index', async ({ page }) => {
   await expect(seedLabels.nth(1)).toHaveValue('Seed 2');
 });
 
+test('add seed does not replace seeds section and preserves in-progress mnemonic', async ({ page }) => {
+  await page.goto('/');
+  await page.fill('textarea[data-seed-mnemonic]', 'abandon abandon');
+  await page.evaluate(() => {
+    (window as Window & { __seedsSectionRef?: Element | null }).__seedsSectionRef =
+      document.querySelector('[data-seeds-section]');
+  });
+
+  await page.click('[data-add-seed]');
+  await expect(page.locator('textarea[data-seed-mnemonic]')).toHaveCount(2);
+
+  const sameSectionAfterAdd = await page.evaluate(
+    () =>
+      (window as Window & { __seedsSectionRef?: Element | null }).__seedsSectionRef ===
+      document.querySelector('[data-seeds-section]')
+  );
+  expect(sameSectionAfterAdd).toBe(true);
+  await expect(page.locator('textarea[data-seed-mnemonic]').first()).toHaveValue('abandon abandon');
+});
+
 test('auto-updates path label from preset until manually overridden', async ({ page }) => {
   await page.goto('/');
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
@@ -432,10 +494,12 @@ test('shamir mode shows generate button and renders shares after generate', asyn
   const generateButton = page.locator('[data-generate]');
   await expect(generateButton).toBeVisible();
   await expect(generateButton).toHaveText(/Generate Vault/i);
+  await page.click('[data-generate]');
+  await expect(page.locator('[data-download-vault-html]')).toBeEnabled();
 
   const [download] = await Promise.all([
     page.waitForEvent('download'),
-    generateButton.click()
+    page.click('[data-download-vault-html]')
   ]);
   await download.saveAs(testInfo.outputPath('vault-shamir-generate-visibility.html'));
 

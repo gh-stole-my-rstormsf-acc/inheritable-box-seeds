@@ -1,4 +1,5 @@
-import runtimeBundle from './runtime.bundle.js?raw';
+import runtimePasswordBundle from './runtime.password.bundle.js?raw';
+import runtimeShamirBundle from './runtime.shamir.bundle.js?raw';
 import type { Vault } from '../shared/types';
 
 const STYLE = `
@@ -480,6 +481,10 @@ export const buildVaultHtml = (vault: Vault) => {
         return char;
     }
   });
+
+  const runtimeBundle = vault.encryption.type === 'password' ? runtimePasswordBundle : runtimeShamirBundle;
+  const runtimeMode = vault.encryption.type === 'password' ? 'password-only' : 'shamir-only';
+
   return `<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -493,6 +498,7 @@ export const buildVaultHtml = (vault: Vault) => {
   </head>
   <body>
     <div id="app"></div>
+    <!-- VAULT_RUNTIME_MODE: ${runtimeMode} -->
     <script>window.__SEED_VAULT__ = ${vaultJson};</script>
     <script>${runtimeBundle}</script>
   </body>
