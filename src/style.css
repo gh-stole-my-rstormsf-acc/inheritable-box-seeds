@@ -107,6 +107,23 @@ body::before {
   max-width: 62ch;
 }
 
+.creator__header-top {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  align-items: flex-start;
+}
+
+.creator__header-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.creator__header-actions button {
+  min-width: 8.5rem;
+}
+
 .wizard-steps {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -133,6 +150,12 @@ body::before {
   transform: translateY(-2px);
   border-color: rgba(129, 192, 255, 0.7);
   background: rgba(29, 50, 84, 0.75);
+}
+
+.wizard-step:disabled {
+  opacity: 1;
+  cursor: default;
+  pointer-events: none;
 }
 
 .wizard-step.is-active {
@@ -259,6 +282,25 @@ select.field-error {
 textarea {
   min-height: 92px;
   resize: vertical;
+}
+
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding-right: 2.35rem;
+  background-image:
+    linear-gradient(45deg, transparent 50%, rgba(191, 228, 255, 0.9) 50%),
+    linear-gradient(135deg, rgba(191, 228, 255, 0.9) 50%, transparent 50%);
+  background-position:
+    calc(100% - 1.05rem) calc(50% - 0.16rem),
+    calc(100% - 0.72rem) calc(50% - 0.16rem);
+  background-size: 0.42rem 0.42rem, 0.42rem 0.42rem;
+  background-repeat: no-repeat;
+}
+
+select::-ms-expand {
+  display: none;
 }
 
 button {
@@ -475,6 +517,20 @@ button:hover:not(:disabled) {
   margin-top: var(--space-3);
 }
 
+.password-visibility-toggle {
+  margin-top: var(--space-3);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.56rem;
+  color: #cce1f9;
+  font-size: var(--text-sm);
+}
+
+.password-visibility-toggle input {
+  width: auto;
+  margin-top: 0;
+}
+
 .helper {
   margin: var(--space-2) 0 0;
   font-size: var(--text-sm);
@@ -581,6 +637,97 @@ button:hover:not(:disabled) {
   flex-wrap: wrap;
   gap: var(--space-3);
   margin-bottom: var(--space-4);
+}
+
+.faq-page {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.faq-categories {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.faq-category {
+  display: grid;
+  gap: 0.1rem;
+  text-align: left;
+  background: rgba(19, 38, 68, 0.7);
+  border-color: rgba(125, 168, 222, 0.4);
+  color: #cde2f8;
+}
+
+.faq-category.is-active {
+  background: linear-gradient(135deg, #2ee4ea, #3dc2ff);
+  border-color: rgba(84, 214, 255, 0.78);
+  color: #042437;
+  box-shadow: 0 10px 24px rgba(52, 196, 247, 0.34);
+}
+
+.faq-category strong {
+  font-size: var(--text-sm);
+}
+
+.faq-category span {
+  font-size: var(--text-xs);
+  opacity: 0.85;
+}
+
+.faq-list {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.faq-item {
+  border: 1px solid var(--color-border-subtle);
+  background: linear-gradient(140deg, rgba(24, 44, 74, 0.8), rgba(13, 28, 53, 0.75));
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.faq-item__question {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  margin: 0;
+  text-align: left;
+  padding: 0.88rem 1rem;
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  align-items: center;
+  background: transparent;
+  color: var(--color-text);
+  font-weight: 700;
+}
+
+.faq-item.is-open .faq-item__question {
+  border-bottom-color: rgba(121, 168, 227, 0.35);
+}
+
+.faq-item__icon {
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: var(--radius-pill);
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(125, 168, 222, 0.45);
+  color: #bce6ff;
+  font-size: 1rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.faq-item__answer {
+  padding: 0.86rem 1rem 1rem;
+}
+
+.faq-item__answer p {
+  margin: 0;
+  color: #d4e5f7;
 }
 
 .summary-chip {
@@ -713,12 +860,22 @@ button:hover:not(:disabled) {
   }
 
   .card__header,
+  .creator__header-top,
   .seed__header,
   .path__header,
   .paths__header,
   .vault-file__header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .creator__header-actions {
+    width: 100%;
+  }
+
+  .creator__header-actions button {
+    flex: 1 1 0;
+    min-width: 0;
   }
 
   .wizard-controls {

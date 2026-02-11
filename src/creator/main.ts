@@ -9,6 +9,7 @@ import type { VaultData, VaultFileEntry } from '../shared/types';
 import { deriveKeyArgon2Worker } from './crypto/argon2Worker';
 import { validateArgon2Params, DEFAULT_ARGON2_MIN } from './validation/argon2';
 import { canRemovePath, getOnlyPathTooltip, getTotalPreviewCount, shouldShowLargePreviewWarning } from './pathUi';
+import { FAQ_CATEGORIES, FAQ_ENTRY_COUNT } from './faqContent';
 
 interface PathForm {
   id: string;
@@ -75,6 +76,7 @@ interface PreparedShamirState {
 }
 
 type WizardStepId = 'seeds' | 'files' | 'paths' | 'security' | 'finalize';
+type CreatorView = 'wizard' | 'faq';
 
 interface WizardStep {
   id: WizardStepId;
@@ -151,6 +153,16 @@ const FAST_PARAMS = { timeCost: 2, memoryCostMB: 1, parallelism: 1 };
 const DEFAULT_STATUS_MESSAGE = 'Complete each step to generate your vault.';
 const MAX_VAULT_FILE_COUNT = 12;
 const MAX_VAULT_TOTAL_FILE_BYTES = 25 * 1024 * 1024;
+const CREATOR_HASH_FAQ = '#faq';
+const CREATOR_HASH_WIZARD = '#create';
+
+const getViewFromHash = (hash: string): CreatorView =>
+  hash.trim().toLowerCase() === CREATOR_HASH_FAQ ? 'faq' : 'wizard';
+
+const getInitialView = (): CreatorView => {
+  if (typeof window === 'undefined') return 'wizard';
+  return getViewFromHash(window.location.hash);
+};
 
 const state = {
   seeds: [createSeed(0)],
@@ -181,7 +193,11 @@ const state = {
   filesValidationArmed: false,
   pathValidationArmed: false,
   securityValidationArmed: false,
-  currentStep: 'seeds' as WizardStepId
+  currentStep: 'seeds' as WizardStepId,
+  view: getInitialView() as CreatorView,
+  faqSelectedCategory: FAQ_CATEGORIES[0]?.id ?? '',
+  faqExpandedEntries: new Set<string>(),
+  securityShowPasswords: false
 };
 
 type Child = Node | string | null | undefined;
@@ -278,6 +294,46 @@ const setStatus = (message: string, tone: 'info' | 'error' = 'info') => {
   state.status = message;
   state.statusTone = tone;
   render();
+};
+
+const getSelectedFaqCategory = () => {
+  const selected = FAQ_CATEGORIES.find((category) => category.id === state.faqSelectedCategory);
+  if (selected) return selected;
+  const fallback = FAQ_CATEGORIES[0];
+  if (fallback) state.faqSelectedCategory = fallback.id;
+  return fallback;
+};
+
+const syncCreatorHash = (view: CreatorView) => {
+  if (typeof window === 'undefined') return;
+  const targetHash = view === 'faq' ? CREATOR_HASH_FAQ : CREATOR_HASH_WIZARD;
+  if (window.location.hash === targetHash) return;
+  const nextUrl = `${window.location.pathname}${window.location.search}${targetHash}`;
+  window.history.replaceState(null, '', nextUrl);
+};
+
+const setCreatorView = (view: CreatorView, options: { syncHash?: boolean } = {}) => {
+  const { syncHash = true } = options;
+  if (state.view === view) {
+    if (syncHash) syncCreatorHash(view);
+    return;
+  }
+  state.view = view;
+  if (syncHash) syncCreatorHash(view);
+  render();
+};
+
+let hashListenerBound = false;
+
+const bindCreatorHashListener = () => {
+  if (hashListenerBound || typeof window === 'undefined') return;
+  window.addEventListener('hashchange', () => {
+    const nextView = getViewFromHash(window.location.hash);
+    if (nextView === state.view) return;
+    state.view = nextView;
+    render();
+  });
+  hashListenerBound = true;
 };
 
 const invalidateShamirPreparation = () => {
@@ -864,6 +920,7 @@ const clearSensitiveState = () => {
   }));
   state.encryption.password = '';
   state.encryption.confirm = '';
+  state.securityShowPasswords = false;
   state.fileAttachmentsEnabled = false;
   state.files = [];
   render();
@@ -1080,7 +1137,8 @@ const buildWizardStepper = () => {
     const item = el('button', {
       className: `wizard-step ${index === currentIndex ? 'is-active' : ''} ${index < currentIndex ? 'is-complete' : ''}`,
       dataset: { stepLink: step.id },
-      attrs: { type: 'button' }
+      attrs: { type: 'button' },
+      disabled: true
     });
     item.appendChild(el('span', { className: 'wizard-step__dot', text: String(index + 1) }));
     item.appendChild(
@@ -1449,7 +1507,7 @@ const buildPathCard = (seed: SeedForm, path: PathForm, fieldErrors: FieldErrorSt
 
   pathEl.appendChild(
     el('div', { className: 'path__header' }, [
-      el('strong', { text: path.label || 'Path' }),
+      el('strong', { dataset: { pathTitle: `${seed.id}:${path.id}` }, text: path.label || 'Path' }),
       removeButton
     ])
   );
@@ -1501,6 +1559,7 @@ const buildPathCard = (seed: SeedForm, path: PathForm, fieldErrors: FieldErrorSt
   pathEl.appendChild(
     el('p', {
       className: `helper ${pathStatus.valid ? 'ok' : 'error'}`,
+      dataset: { pathStatus: `${seed.id}:${path.id}` },
       text: pathStatus.valid ? 'Path valid' : pathStatus.error ?? ''
     })
   );
@@ -1634,6 +1693,32 @@ const syncPathFieldErrorUI = (seedId: string, pathId: string) => {
   if (countInput) countInput.classList.toggle('field-error', hasFieldError(fieldErrors, 'pathCount', key));
 };
 
+const syncPathPresetUI = (seed: SeedForm, path: PathForm) => {
+  if (state.currentStep !== 'paths') return;
+  const key = `${seed.id}:${path.id}`;
+  const select = document.querySelector<HTMLSelectElement>(`[data-path-preset="${key}"]`);
+  if (select) select.value = path.preset;
+
+  const title = document.querySelector<HTMLElement>(`[data-path-title="${key}"]`);
+  if (title) title.textContent = path.label || 'Path';
+
+  const labelInput = document.querySelector<HTMLInputElement>(`[data-path-label="${key}"]`);
+  if (labelInput) labelInput.value = path.label;
+
+  const pathInput = document.querySelector<HTMLInputElement>(`[data-path-value="${key}"]`);
+  if (pathInput) pathInput.value = path.path;
+
+  const status = document.querySelector<HTMLParagraphElement>(`[data-path-status="${key}"]`);
+  if (status) {
+    const pathStatus = validateHdPathTemplate(path.path);
+    status.textContent = pathStatus.valid ? 'Path valid' : pathStatus.error ?? '';
+    status.classList.toggle('ok', pathStatus.valid);
+    status.classList.toggle('error', !pathStatus.valid);
+  }
+
+  syncPathFieldErrorUI(seed.id, path.id);
+};
+
 const syncSecurityFieldErrorUI = () => {
   if (state.currentStep !== 'security') return;
   const fieldErrors = collectFieldErrors();
@@ -1653,6 +1738,35 @@ const syncSecurityFieldErrorUI = () => {
   if (thresholdInput) thresholdInput.classList.toggle('field-error', hasFieldError(fieldErrors, 'threshold'));
   const totalInput = document.querySelector<HTMLInputElement>('[data-total]');
   if (totalInput) totalInput.classList.toggle('field-error', hasFieldError(fieldErrors, 'total'));
+};
+
+const syncArgonPresetUI = () => {
+  if (state.currentStep !== 'security' || state.encryption.mode !== 'password') return;
+  const showCustom = state.encryption.argonPresetId === 'custom';
+  const customHost = document.querySelector<HTMLElement>('[data-argon-custom]');
+  if (customHost) customHost.hidden = !showCustom;
+  const presetHint = document.querySelector<HTMLElement>('[data-argon-preset-hint]');
+  if (presetHint) presetHint.hidden = showCustom;
+
+  const helper = document.querySelector<HTMLParagraphElement>('[data-argon-error]');
+  if (helper) {
+    const validation = validateArgon2Params(state.encryption.argonCustom);
+    helper.textContent = validation.valid ? 'Custom parameters look good.' : validation.error ?? '';
+    helper.classList.toggle('error', !validation.valid);
+  }
+
+  syncSecurityFieldErrorUI();
+};
+
+const syncSecurityPasswordVisibilityUI = () => {
+  if (state.currentStep !== 'security' || state.encryption.mode !== 'password') return;
+  const passwordType = state.securityShowPasswords ? 'text' : 'password';
+  const passwordInput = document.querySelector<HTMLInputElement>('[data-password]');
+  if (passwordInput) passwordInput.type = passwordType;
+  const confirmInput = document.querySelector<HTMLInputElement>('[data-confirm]');
+  if (confirmInput) confirmInput.type = passwordType;
+  const toggle = document.querySelector<HTMLInputElement>('[data-password-visibility]');
+  if (toggle) toggle.checked = state.securityShowPasswords;
 };
 
 const syncSecurityNextButtonState = () => {
@@ -1713,8 +1827,8 @@ const bindPathFieldListeners = (scope: ParentNode) => {
       } else {
         path.preset = 'custom';
       }
+      syncPathPresetUI(seed, path);
       schedulePreview(seed, path);
-      render();
     });
   });
 
@@ -1941,7 +2055,7 @@ const buildSecuritySection = () => {
     section.appendChild(
       el('input', {
         className: hasFieldError(fieldErrors, 'password') ? 'field-error' : undefined,
-        type: 'password',
+        type: state.securityShowPasswords ? 'text' : 'password',
         dataset: { password: '' },
         value: state.encryption.password
       })
@@ -1950,11 +2064,21 @@ const buildSecuritySection = () => {
     section.appendChild(
       el('input', {
         className: hasFieldError(fieldErrors, 'confirm') ? 'field-error' : undefined,
-        type: 'password',
+        type: state.securityShowPasswords ? 'text' : 'password',
         dataset: { confirm: '' },
         value: state.encryption.confirm
       })
     );
+    const visibilityToggle = el('label', { className: 'password-visibility-toggle' });
+    visibilityToggle.appendChild(
+      el('input', {
+        type: 'checkbox',
+        checked: state.securityShowPasswords,
+        dataset: { passwordVisibility: '' }
+      })
+    );
+    visibilityToggle.appendChild(document.createTextNode(' Show password'));
+    section.appendChild(visibilityToggle);
     const strength = el('span', { dataset: { strength: '' }, text: String(passwordStrength(state.encryption.password)) });
     const helper = el('p', { className: 'helper' });
     helper.appendChild(document.createTextNode('Strength: '));
@@ -1980,55 +2104,59 @@ const buildSecuritySection = () => {
     presetSelect.appendChild(customOption);
     section.appendChild(presetSelect);
 
-    if (state.encryption.argonPresetId === 'custom') {
-      const timeRow = el('div', { className: 'row' }, [
-        el('label', { text: 'Time cost (t)' }),
-        el('input', {
-          className: hasFieldError(fieldErrors, 'argonTime') ? 'field-error' : undefined,
-          type: 'number',
-          min: String(DEFAULT_ARGON2_MIN.timeCost),
-          dataset: { argonTime: '' },
-          value: String(state.encryption.argonCustom.timeCost)
-        })
-      ]);
-      const memoryRow = el('div', { className: 'row' }, [
-        el('label', { text: 'Memory (MB)' }),
-        el('input', {
-          className: hasFieldError(fieldErrors, 'argonMemory') ? 'field-error' : undefined,
-          type: 'number',
-          min: String(DEFAULT_ARGON2_MIN.memoryCostMB),
-          dataset: { argonMemory: '' },
-          value: String(state.encryption.argonCustom.memoryCostMB)
-        })
-      ]);
-      const parallelRow = el('div', { className: 'row' }, [
-        el('label', { text: 'Parallelism (p)' }),
-        el('input', {
-          className: hasFieldError(fieldErrors, 'argonParallelism') ? 'field-error' : undefined,
-          type: 'number',
-          min: String(DEFAULT_ARGON2_MIN.parallelism),
-          dataset: { argonParallelism: '' },
-          value: String(state.encryption.argonCustom.parallelism)
-        })
-      ]);
-      section.appendChild(timeRow);
-      section.appendChild(memoryRow);
-      section.appendChild(parallelRow);
-      section.appendChild(
-        el('p', {
-          className: `helper ${argonCustomValidation.valid ? '' : 'error'}`,
-          dataset: { argonError: '' },
-          text: argonCustomValidation.valid ? 'Custom parameters look good.' : argonCustomValidation.error ?? ''
-        })
-      );
-    } else {
-      section.appendChild(
-        el('p', {
-          className: 'helper',
-          text: 'Higher settings increase security but may take up to 85 seconds on mobile.'
-        })
-      );
-    }
+    const timeRow = el('div', { className: 'row' }, [
+      el('label', { text: 'Time cost (t)' }),
+      el('input', {
+        className: hasFieldError(fieldErrors, 'argonTime') ? 'field-error' : undefined,
+        type: 'number',
+        min: String(DEFAULT_ARGON2_MIN.timeCost),
+        dataset: { argonTime: '' },
+        value: String(state.encryption.argonCustom.timeCost)
+      })
+    ]);
+    const memoryRow = el('div', { className: 'row' }, [
+      el('label', { text: 'Memory (MB)' }),
+      el('input', {
+        className: hasFieldError(fieldErrors, 'argonMemory') ? 'field-error' : undefined,
+        type: 'number',
+        min: String(DEFAULT_ARGON2_MIN.memoryCostMB),
+        dataset: { argonMemory: '' },
+        value: String(state.encryption.argonCustom.memoryCostMB)
+      })
+    ]);
+    const parallelRow = el('div', { className: 'row' }, [
+      el('label', { text: 'Parallelism (p)' }),
+      el('input', {
+        className: hasFieldError(fieldErrors, 'argonParallelism') ? 'field-error' : undefined,
+        type: 'number',
+        min: String(DEFAULT_ARGON2_MIN.parallelism),
+        dataset: { argonParallelism: '' },
+        value: String(state.encryption.argonCustom.parallelism)
+      })
+    ]);
+    const customFields = el('div', {
+      dataset: { argonCustom: '' },
+      hidden: state.encryption.argonPresetId !== 'custom'
+    });
+    customFields.appendChild(timeRow);
+    customFields.appendChild(memoryRow);
+    customFields.appendChild(parallelRow);
+    customFields.appendChild(
+      el('p', {
+        className: `helper ${argonCustomValidation.valid ? '' : 'error'}`,
+        dataset: { argonError: '' },
+        text: argonCustomValidation.valid ? 'Custom parameters look good.' : argonCustomValidation.error ?? ''
+      })
+    );
+    section.appendChild(customFields);
+    section.appendChild(
+      el('p', {
+        className: 'helper',
+        dataset: { argonPresetHint: '' },
+        hidden: state.encryption.argonPresetId === 'custom',
+        text: 'Higher settings increase security but may take up to 85 seconds on mobile.'
+      })
+    );
   } else {
     const shamirReady = hasPreparedShamirForCurrentState();
     const thresholdRow = el('div', { className: 'row' }, [
@@ -2221,13 +2349,141 @@ const buildCurrentStepPanel = () => {
   return buildFinalizeSection();
 };
 
+const buildFaqPage = () => {
+  const selectedCategory = getSelectedFaqCategory();
+  const section = el('section', { className: 'card faq-page', dataset: { faqPage: '' } });
+  section.appendChild(
+    el('div', { className: 'card__header' }, [
+      el('div', {}, [
+        el('h2', { text: 'Creator FAQ' }),
+        el('p', {
+          className: 'helper',
+          text: `Comprehensive reference for creator setup, encryption decisions, and vault recovery (${FAQ_ENTRY_COUNT} questions).`
+        })
+      ])
+    ])
+  );
+
+  const categoryHost = el('div', { className: 'faq-categories', attrs: { role: 'tablist', 'aria-label': 'FAQ categories' } });
+  FAQ_CATEGORIES.forEach((category) => {
+    const isActive = category.id === selectedCategory?.id;
+    const button = el('button', {
+      className: `faq-category ${isActive ? 'is-active' : ''}`,
+      dataset: { faqCategory: category.id },
+      attrs: { type: 'button', role: 'tab', 'aria-selected': String(isActive) }
+    });
+    button.appendChild(el('strong', { text: category.title }));
+    button.appendChild(el('span', { text: `${category.entries.length} questions` }));
+    categoryHost.appendChild(button);
+  });
+  section.appendChild(categoryHost);
+
+  if (!selectedCategory) {
+    section.appendChild(
+      el('p', {
+        className: 'helper error',
+        text: 'FAQ content is currently unavailable.'
+      })
+    );
+    return section;
+  }
+
+  section.appendChild(el('p', { className: 'helper', text: selectedCategory.description }));
+  const list = el('div', { className: 'faq-list' });
+  selectedCategory.entries.forEach((entry) => {
+    const expanded = state.faqExpandedEntries.has(entry.id);
+    const answerId = `faq-answer-${entry.id}`;
+    const item = el('article', { className: `faq-item ${expanded ? 'is-open' : ''}` });
+    item.appendChild(
+      el(
+        'button',
+        {
+          className: 'faq-item__question',
+          dataset: { faqEntryToggle: entry.id },
+          attrs: {
+            type: 'button',
+            'aria-expanded': String(expanded),
+            'aria-controls': answerId
+          }
+        },
+        [
+          el('span', { text: entry.question }),
+          el('span', { className: 'faq-item__icon', text: expanded ? '-' : '+' })
+        ]
+      )
+    );
+    item.appendChild(
+      el(
+        'div',
+        {
+          className: 'faq-item__answer',
+          dataset: { faqEntryAnswer: entry.id },
+          attrs: { id: answerId },
+          hidden: !expanded
+        },
+        [el('p', { text: entry.answer })]
+      )
+    );
+    list.appendChild(item);
+  });
+  section.appendChild(list);
+  return section;
+};
+
+const syncFaqEntryUI = (entryId: string) => {
+  const toggle = document.querySelector<HTMLButtonElement>(`[data-faq-entry-toggle="${entryId}"]`);
+  const answer = document.querySelector<HTMLElement>(`[data-faq-entry-answer="${entryId}"]`);
+  if (!toggle || !answer) return;
+
+  const expanded = state.faqExpandedEntries.has(entryId);
+  toggle.setAttribute('aria-expanded', String(expanded));
+  const icon = toggle.querySelector<HTMLElement>('.faq-item__icon');
+  if (icon) icon.textContent = expanded ? '-' : '+';
+  answer.hidden = !expanded;
+  toggle.closest('.faq-item')?.classList.toggle('is-open', expanded);
+};
+
+const buildCreatorHeader = () => {
+  const header = el('header', { className: 'creator__header' });
+  const topRow = el('div', { className: 'creator__header-top' });
+  topRow.appendChild(
+    el('div', {}, [
+      el('h1', { text: 'Seed Vault Creator' }),
+      el('p', { text: 'Offline tool to encrypt seed phrases, sensitive files, and recovery details into a portable vault.' })
+    ])
+  );
+
+  const actions = el('div', { className: 'creator__header-actions' });
+  actions.appendChild(
+    el('button', {
+      className: state.view === 'wizard' ? 'primary' : 'ghost',
+      dataset: { viewSwitch: 'wizard' },
+      attrs: { type: 'button' },
+      text: 'Vault Creator'
+    })
+  );
+  actions.appendChild(
+    el('button', {
+      className: state.view === 'faq' ? 'primary' : 'ghost',
+      dataset: { viewSwitch: 'faq' },
+      attrs: { type: 'button' },
+      text: 'FAQ'
+    })
+  );
+  topRow.appendChild(actions);
+  header.appendChild(topRow);
+  return header;
+};
+
 const buildApp = () => {
   const main = el('main', { className: 'creator wizard' });
-  const header = el('header', { className: 'creator__header' }, [
-    el('h1', { text: 'Seed Vault Creator' }),
-    el('p', { text: 'A guided, offline flow for seed phrases, derivation paths, and long-term recovery.' })
-  ]);
-  main.appendChild(header);
+  main.appendChild(buildCreatorHeader());
+
+  if (state.view === 'faq') {
+    main.appendChild(buildFaqPage());
+    return main;
+  }
+
   main.appendChild(buildWizardStepper());
   if (!(state.currentStep === 'finalize' && state.status === DEFAULT_STATUS_MESSAGE)) {
     main.appendChild(el('div', { className: `status status--banner ${state.statusTone}`, text: state.status }));
@@ -2242,11 +2498,34 @@ const render = () => {
   if (!root) return;
   root.replaceChildren(buildApp());
 
-  root.querySelectorAll<HTMLButtonElement>('[data-step-link]').forEach((button) => {
+  root.querySelectorAll<HTMLButtonElement>('[data-view-switch]').forEach((button) => {
     button.addEventListener('click', () => {
-      const stepId = button.dataset.stepLink as WizardStepId | undefined;
-      if (!stepId) return;
-      goToStep(stepId);
+      const targetView = button.dataset.viewSwitch;
+      if (targetView === 'wizard' || targetView === 'faq') {
+        setCreatorView(targetView);
+      }
+    });
+  });
+
+  root.querySelectorAll<HTMLButtonElement>('[data-faq-category]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const categoryId = button.dataset.faqCategory;
+      if (!categoryId || categoryId === state.faqSelectedCategory) return;
+      state.faqSelectedCategory = categoryId;
+      render();
+    });
+  });
+
+  root.querySelectorAll<HTMLButtonElement>('[data-faq-entry-toggle]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const entryId = button.dataset.faqEntryToggle;
+      if (!entryId) return;
+      if (state.faqExpandedEntries.has(entryId)) {
+        state.faqExpandedEntries.delete(entryId);
+      } else {
+        state.faqExpandedEntries.add(entryId);
+      }
+      syncFaqEntryUI(entryId);
     });
   });
 
@@ -2297,9 +2576,14 @@ const render = () => {
     syncSecurityFieldErrorUI();
   });
 
+  root.querySelector<HTMLInputElement>('[data-password-visibility]')?.addEventListener('change', (event) => {
+    state.securityShowPasswords = (event.target as HTMLInputElement).checked;
+    syncSecurityPasswordVisibilityUI();
+  });
+
   root.querySelector<HTMLSelectElement>('[data-argon-preset]')?.addEventListener('change', (event) => {
     state.encryption.argonPresetId = (event.target as HTMLSelectElement).value as 'default' | 'high' | 'custom';
-    render();
+    syncArgonPresetUI();
   });
 
   root.querySelector<HTMLInputElement>('[data-argon-time]')?.addEventListener('input', (event) => {
@@ -2392,4 +2676,11 @@ const render = () => {
   });
 };
 
-export const renderCreatorApp = () => render();
+export const renderCreatorApp = () => {
+  bindCreatorHashListener();
+  if (typeof window !== 'undefined') {
+    state.view = getViewFromHash(window.location.hash);
+  }
+  syncCreatorHash(state.view);
+  render();
+};
