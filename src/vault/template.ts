@@ -3,53 +3,448 @@ import type { Vault } from '../shared/types';
 
 const STYLE = `
   :root {
-    color-scheme: light;
-    font-family: "Iowan Old Style", "Palatino Linotype", "Palatino", serif;
-    background: #f8f4ec;
-    color: #1f1f1f;
+    color-scheme: dark;
+    font-family: "Avenir Next", "Trebuchet MS", "Segoe UI", sans-serif;
+    --text-xs: 0.75rem;
+    --text-sm: 0.875rem;
+    --text-base: 1rem;
+    --text-lg: 1.5rem;
+    --space-2: 0.5rem;
+    --space-3: 0.75rem;
+    --space-4: 1rem;
+    --space-6: 1.5rem;
+    --space-8: 2rem;
+    --radius-sm: 0.7rem;
+    --radius-md: 1rem;
+    --radius-lg: 1.35rem;
+    --radius-pill: 999px;
+    --color-bg: #0a152a;
+    --color-surface: #12233f;
+    --color-surface-strong: #0d1e37;
+    --color-text: #e5eef9;
+    --color-text-muted: #9cb2cf;
+    --color-primary: #2ee4ea;
+    --color-border: rgba(107, 153, 215, 0.36);
+    --color-border-subtle: rgba(122, 164, 219, 0.2);
+    --color-ok: #45dc93;
+    --color-error: #ff8e7f;
+    --shadow-deep: 0 24px 60px rgba(2, 9, 24, 0.48), 0 8px 24px rgba(0, 0, 0, 0.28);
+    --shadow-glow: 0 0 0 1px rgba(46, 228, 234, 0.3), 0 0 24px rgba(46, 228, 234, 0.22);
+    --ease-snappy: cubic-bezier(0.16, 1, 0.3, 1);
+    --ease-smooth: cubic-bezier(0.33, 1, 0.68, 1);
   }
-  body { margin: 0; background: linear-gradient(180deg, #faf6ef, #efe6d8); }
-  .vault { max-width: 860px; margin: 0 auto; padding: 32px 20px 60px; }
-  .vault h1 { margin-bottom: 6px; }
-  .vault-card { background: #fff; border-radius: 16px; padding: 20px; margin: 20px 0; box-shadow: 0 12px 30px rgba(0,0,0,0.08); }
-  .vault-card h2 { margin-top: 0; }
-  .status { margin: 12px 0; padding: 10px 12px; border-radius: 8px; background: #f0efe9; }
-  .status[data-tone="error"] { background: #ffe6e6; color: #7b1a1a; }
-  .hint { color: #444; }
-  .decrypt label { display: block; margin: 12px 0 6px; }
-  .decrypt input, .decrypt textarea { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #d8d2c6; font-family: inherit; }
-  .decrypt button { margin-top: 12px; padding: 10px 16px; border-radius: 10px; border: none; background: #2f5d62; color: #fff; cursor: pointer; }
-  .vault-seed { border-top: 1px solid #eee; padding: 16px 0; }
-  .vault-seed:first-child { border-top: none; }
-  .vault-seed header { display: flex; justify-content: space-between; align-items: center; }
-  .vault-seed button { padding: 6px 12px; border-radius: 8px; border: 1px solid #d8d2c6; background: #f7f3ec; cursor: pointer; }
-  .secret { font-family: "Courier New", monospace; background: #f7f3ec; padding: 12px; border-radius: 10px; transition: filter 0.3s ease, opacity 0.3s ease; }
-  .secret[data-hidden="true"] { filter: blur(6px); opacity: 0.35; user-select: none; }
-  .secret--compact { padding: 8px 10px; font-size: 0.85rem; }
-  .passphrase { display: flex; flex-direction: column; gap: 6px; }
-  .passphrase__header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-  .passphrase__header button { padding: 4px 10px; border-radius: 8px; border: 1px solid #d8d2c6; background: #f7f3ec; cursor: pointer; }
-  .passphrase__label { margin: 0; font-size: 0.85rem; color: #5c5242; }
-  .path { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px dashed #eee; }
-  .path:last-child { border-bottom: none; }
-  .meta { display: flex; flex-direction: column; gap: 4px; color: #555; font-size: 0.9rem; }
-  .actions { display: flex; gap: 12px; margin-bottom: 12px; }
-  .actions button { padding: 10px 14px; border-radius: 10px; border: 1px solid #d8d2c6; background: #f7f3ec; cursor: pointer; }
-  .actions { flex-wrap: wrap; align-items: center; }
-  .derived-group { border: 1px solid #eee; background: #fdf9f2; border-radius: 14px; padding: 16px; margin-bottom: 16px; }
-  .derived-group__header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 12px; }
-  .derived-group__meta { display: flex; flex-direction: column; gap: 4px; }
-  .derived-group__passphrase { min-width: 220px; display: flex; flex-direction: column; gap: 6px; }
-  .derived-group__passphrase span { color: #5c5242; font-size: 0.9rem; }
-  .derived-list { display: grid; gap: 10px; }
-  .derived-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border: 1px solid #eee; border-radius: 10px; background: #fff; }
-  .derived-item code { font-family: "Courier New", monospace; font-size: 0.9rem; word-break: break-all; }
-  .toggle { display: flex; gap: 12px; margin-bottom: 12px; }
-  .progress { background: #ece4d7; border-radius: 8px; height: 10px; overflow: hidden; }
-  .progress .bar { background: #2f5d62; height: 100%; width: 0; transition: width 0.2s ease; }
-  @media (max-width: 600px) {
-    .path { flex-direction: column; }
-    .actions { flex-direction: column; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    color: var(--color-text);
+    background:
+      radial-gradient(circle at 14% 0%, rgba(46, 228, 234, 0.2), transparent 32%),
+      radial-gradient(circle at 87% 20%, rgba(87, 142, 255, 0.22), transparent 34%),
+      linear-gradient(145deg, #091325 0%, #0c1a2f 50%, #0a162b 100%);
+    line-height: 1.55;
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.3;
+    background:
+      repeating-linear-gradient(90deg, rgba(57, 101, 157, 0.08), rgba(57, 101, 157, 0.08) 1px, transparent 1px, transparent 180px),
+      repeating-linear-gradient(0deg, rgba(57, 101, 157, 0.06), rgba(57, 101, 157, 0.06) 1px, transparent 1px, transparent 120px);
+  }
+  #app {
+    min-height: 100vh;
+    padding: clamp(1rem, 2.4vw, 2rem);
+    position: relative;
+    z-index: 1;
+  }
+  .vault {
+    max-width: 1100px;
+    margin: 0 auto;
+    display: grid;
+    gap: var(--space-6);
+  }
+  .vault > header {
+    padding: var(--space-6) var(--space-8);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--color-border-subtle);
+    background: linear-gradient(135deg, rgba(14, 30, 55, 0.92), rgba(10, 22, 44, 0.88));
+    box-shadow: var(--shadow-deep);
+    animation: vaultReveal 560ms var(--ease-smooth) both;
+  }
+  .vault > header h1 {
+    margin: 0;
+    font-size: clamp(1.6rem, 2vw, 2.3rem);
+    line-height: 1.15;
+  }
+  .vault > header p {
+    margin: var(--space-2) 0 0;
+    color: var(--color-text-muted);
+    max-width: 60ch;
+  }
+  .vault-card {
+    position: relative;
+    overflow: hidden;
+    background: linear-gradient(135deg, rgba(17, 35, 63, 0.96), rgba(10, 24, 48, 0.93));
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-deep);
+    padding: var(--space-6);
+    animation: vaultReveal 520ms var(--ease-smooth) both;
+  }
+  .vault-card::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(circle at 100% 0%, rgba(46, 228, 234, 0.12), transparent 38%);
+  }
+  .vault-card h2 {
+    margin: 0 0 var(--space-3);
+    font-size: clamp(1.2rem, 1.7vw, 1.7rem);
+    line-height: 1.15;
+  }
+  .hint {
+    margin: 0 0 var(--space-3);
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+  }
+  .status {
+    margin-bottom: var(--space-4);
+    padding: 0.72rem 0.9rem;
+    border-radius: var(--radius-sm);
+    background: rgba(14, 34, 58, 0.88);
+    border: 1px solid rgba(121, 168, 227, 0.35);
+    color: #c9ddf5;
+  }
+  .status[data-tone="error"] {
+    background: rgba(87, 35, 38, 0.8);
+    border-color: rgba(255, 143, 125, 0.54);
+    color: #ffd4cc;
+  }
+  label {
+    display: block;
+    margin-top: var(--space-4);
+    font-size: var(--text-sm);
+    font-weight: 650;
+    color: #c7daf3;
+  }
+  input, textarea, select {
+    width: 100%;
+    margin-top: var(--space-2);
+    padding: 0.7rem 0.9rem;
+    border-radius: 0.85rem;
+    border: 1px solid rgba(136, 180, 236, 0.36);
+    background: rgba(8, 20, 40, 0.6);
+    color: var(--color-text);
+    font-family: inherit;
+    font-size: var(--text-base);
+    transition: border-color 160ms var(--ease-snappy), box-shadow 160ms var(--ease-snappy), background 160ms var(--ease-snappy);
+  }
+  input:focus, textarea:focus, select:focus {
+    outline: none;
+    border-color: rgba(46, 228, 234, 0.85);
+    box-shadow: 0 0 0 3px rgba(46, 228, 234, 0.16);
+    background: rgba(10, 26, 53, 0.74);
+  }
+  textarea {
+    min-height: 90px;
+    resize: vertical;
+  }
+  button {
+    margin-top: var(--space-3);
+    border-radius: 0.85rem;
+    border: 1px solid rgba(127, 171, 230, 0.38);
+    background: rgba(22, 45, 76, 0.75);
+    color: #c7daf3;
+    font-size: var(--text-sm);
+    font-weight: 650;
+    padding: 0.62rem 0.95rem;
+    cursor: pointer;
+    transition: transform 150ms var(--ease-snappy), border-color 150ms var(--ease-snappy), background 150ms var(--ease-snappy), box-shadow 150ms var(--ease-snappy);
+  }
+  button:hover {
+    transform: translateY(-1px);
+    border-color: rgba(46, 228, 234, 0.65);
+    background: rgba(28, 57, 95, 0.85);
+    box-shadow: var(--shadow-glow);
+  }
+  button:disabled {
+    opacity: 0.58;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+  .decrypt > button[data-decrypt-btn] {
+    background: linear-gradient(135deg, rgba(32, 96, 139, 0.95), rgba(21, 70, 123, 0.95));
+    border-color: rgba(81, 171, 255, 0.62);
+    color: #ecf8ff;
+  }
+  .decrypt {
+    display: grid;
+    gap: var(--space-3);
+  }
+  .decrypt > label {
+    margin-top: var(--space-2);
+  }
+  .decrypt > button {
+    justify-self: start;
+  }
+  .share {
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-sm);
+    background: linear-gradient(145deg, rgba(10, 24, 45, 0.75), rgba(8, 20, 38, 0.72));
+    padding: 0.78rem 0.9rem;
+  }
+  .share label {
+    margin-top: 0;
+  }
+  .share textarea {
+    min-height: 82px;
+    border-color: rgba(101, 151, 216, 0.4);
+    background: rgba(5, 14, 29, 0.6);
+  }
+  .share + .share {
+    margin-top: var(--space-2);
+  }
+  .actions {
+    margin-top: var(--space-4);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    align-items: center;
+  }
+  .actions button {
+    margin-top: 0;
+  }
+  .toggle {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-4);
+    margin: var(--space-3) 0 var(--space-2);
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-sm);
+    background: rgba(9, 22, 42, 0.45);
+  }
+  .toggle label {
+    margin-top: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+  }
+  .toggle input {
+    margin-top: 0;
+    width: auto;
+  }
+  .progress {
+    height: 0.62rem;
+    margin-top: var(--space-3);
+    border-radius: 0.55rem;
+    overflow: hidden;
+    border: 1px solid rgba(93, 139, 194, 0.33);
+    background: rgba(10, 24, 47, 0.92);
+  }
+  .progress .bar {
+    width: 0;
+    height: 100%;
+    background: linear-gradient(135deg, #2ee4ea, #57cbff);
+    transition: width 220ms var(--ease-snappy);
+  }
+  .vault-seed {
+    padding: var(--space-4);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-md);
+    background: linear-gradient(140deg, rgba(24, 44, 74, 0.8), rgba(13, 28, 53, 0.75));
+  }
+  .vault-seed + .vault-seed {
+    margin-top: var(--space-4);
+  }
+  .vault-seed header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+  .vault-seed h3 {
+    margin: 0;
+    font-size: 1.1rem;
+  }
+  .secret {
+    margin-top: var(--space-3);
+    padding: 0.72rem 0.88rem;
+    border-radius: 0.72rem;
+    border: 1px solid rgba(96, 143, 206, 0.35);
+    background: rgba(8, 20, 40, 0.62);
+    color: #d9ecff;
+    font-family: "Courier New", monospace;
+    transition: filter 240ms var(--ease-snappy), opacity 240ms var(--ease-snappy);
+  }
+  .secret[data-hidden="true"] {
+    filter: blur(6px);
+    opacity: 0.35;
+    user-select: none;
+  }
+  .secret--compact {
+    margin-top: 0;
+    font-size: 0.82rem;
+    line-height: 1.35;
+  }
+  .paths {
+    margin-top: var(--space-4);
+    display: grid;
+    gap: var(--space-3);
+  }
+  .path {
+    display: grid;
+    grid-template-columns: 1.6fr 1fr;
+    gap: var(--space-4);
+    padding: var(--space-4);
+    border-radius: var(--radius-sm);
+    border: 1px dashed rgba(111, 158, 219, 0.36);
+    background: rgba(7, 18, 36, 0.42);
+  }
+  .path p {
+    margin: var(--space-2) 0 0;
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+    word-break: break-all;
+  }
+  .meta {
+    display: grid;
+    gap: 0.35rem;
+    justify-items: end;
+    align-content: start;
+    color: #aac2df;
+    font-size: var(--text-sm);
+  }
+  .passphrase {
+    width: 100%;
+    display: grid;
+    gap: 0.42rem;
+    padding: 0.5rem 0.6rem;
+    border-radius: 0.65rem;
+    border: 1px solid rgba(101, 152, 219, 0.35);
+    background: rgba(6, 16, 33, 0.56);
+  }
+  .passphrase__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    font-size: var(--text-sm);
+  }
+  .passphrase__header button {
+    margin-top: 0;
+    padding: 0.35rem 0.68rem;
+    font-size: var(--text-xs);
+  }
+  .passphrase__label {
+    margin: 0;
+    color: var(--color-text-muted);
+    font-size: var(--text-xs);
+  }
+  .derived-group {
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-md);
+    padding: var(--space-4);
+    background: linear-gradient(140deg, rgba(20, 43, 73, 0.78), rgba(11, 26, 49, 0.76));
+    margin-bottom: var(--space-4);
+  }
+  .derived-group__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: var(--space-4);
+    margin-bottom: var(--space-3);
+  }
+  .derived-group__meta {
+    display: grid;
+    gap: 0.28rem;
+  }
+  .derived-group__meta span {
+    color: var(--color-text-muted);
+    word-break: break-all;
+    font-size: var(--text-sm);
+  }
+  .derived-group__passphrase {
+    min-width: 220px;
+    display: grid;
+    gap: 0.35rem;
+  }
+  .derived-group__passphrase > span {
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+  }
+  .derived-list {
+    display: grid;
+    gap: var(--space-2);
+  }
+  .derived-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-3);
+    padding: 0.58rem 0.72rem;
+    border: 1px solid rgba(101, 149, 210, 0.34);
+    border-radius: 0.72rem;
+    background: rgba(9, 22, 42, 0.55);
+  }
+  .derived-item p {
+    margin: 0;
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+  }
+  .derived-item code {
+    font-family: "Courier New", monospace;
+    font-size: var(--text-sm);
+    color: #dff1ff;
+    word-break: break-all;
+  }
+  @keyframes vaultReveal {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @media (max-width: 900px) {
+    .vault { gap: var(--space-4); }
+    .vault > header, .vault-card { padding: var(--space-4); }
+    .path {
+      grid-template-columns: 1fr;
+      gap: var(--space-3);
+    }
+    .meta {
+      justify-items: start;
+    }
+    .derived-group__header {
+      flex-direction: column;
+      gap: var(--space-3);
+    }
+    .derived-group__passphrase {
+      min-width: 0;
+      width: 100%;
+    }
+    .derived-item {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+  }
+  @media (max-width: 640px) {
+    #app {
+      padding: 0.75rem;
+    }
+    .vault-seed header {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+    .actions {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .actions button {
+      width: 100%;
+    }
   }
 `;
 

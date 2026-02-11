@@ -29,14 +29,15 @@ const goToStep = async (page: any, step: 'seeds' | 'paths' | 'security' | 'final
   await page.click(`[data-step-link="${step}"]`);
 };
 
-const addPathToSeedIndex = async (page: any, seedIndex: number, preset = 'bip44') => {
-  await page.click('[data-add-path-global]');
-  const seedSelect = page.locator('select[data-new-path-seed]');
-  const seedValue = await seedSelect.locator('option').nth(seedIndex).getAttribute('value');
-  if (!seedValue) throw new Error(`Missing seed option at index ${seedIndex}`);
-  await seedSelect.selectOption(seedValue);
-  await page.selectOption('select[data-new-path-preset]', preset);
-  await page.click('[data-create-path]');
+const addPathToSeedIndex = async (page: any, seedIndex: number) => {
+  await page.locator('[data-add-path-seed]').nth(seedIndex).click();
+};
+
+const prepareShamirShares = async (page: any) => {
+  const prepareButton = page.locator('[data-prepare-shamir]');
+  await expect(prepareButton).toBeVisible();
+  await prepareButton.click();
+  await expect(page.locator('[data-shamir-prep-status]')).toContainText(/can continue to finalize/i);
 };
 
 const generateVault = async (page: any) => {
@@ -101,6 +102,7 @@ test('shamir encryption flow', async ({ page, context }, testInfo) => {
   await page.check('input[value="shamir"]');
   await page.fill('input[data-threshold]', '2');
   await page.fill('input[data-total]', '3');
+  await prepareShamirShares(page);
   await goToStep(page, 'finalize');
 
   const [download] = await Promise.all([
@@ -324,23 +326,14 @@ test('add path does not replace paths section and preserves in-progress field va
       document.querySelector('[data-paths-section]');
   });
 
-  await page.click('[data-add-path-global]');
-  await expect(page.locator('[data-create-path]')).toBeVisible();
+  await page.locator('[data-add-path-seed]').first().click();
+  await expect(page.locator('input[data-path-label]')).toHaveCount(2);
   const sameSectionAfterOpen = await page.evaluate(
     () =>
       (window as Window & { __pathsSectionRef?: Element | null }).__pathsSectionRef ===
       document.querySelector('[data-paths-section]')
   );
   expect(sameSectionAfterOpen).toBe(true);
-
-  await page.click('[data-create-path]');
-  await expect(page.locator('input[data-path-label]')).toHaveCount(2);
-  const sameSectionAfterCreate = await page.evaluate(
-    () =>
-      (window as Window & { __pathsSectionRef?: Element | null }).__pathsSectionRef ===
-      document.querySelector('[data-paths-section]')
-  );
-  expect(sameSectionAfterCreate).toBe(true);
   await expect(page.locator('input[data-path-label]').first()).toHaveValue('Draft Label');
 });
 
@@ -351,7 +344,7 @@ test('disables remove button when a seed has only one path', async ({ page }) =>
 
   const singlePathRemove = page.locator('[data-remove-path]').first();
   await expect(singlePathRemove).toBeDisabled();
-  await expect(singlePathRemove).toHaveAttribute('title', /only path for this seed/i);
+  await expect(singlePathRemove).toHaveAttribute('data-tooltip', /only path for this seed/i);
 
   await addPathToSeedIndex(page, 0);
   await expect(page.locator('[data-remove-path]')).toHaveCount(2);
@@ -387,7 +380,62 @@ test('shows path step error with red field and clears after fix', async ({ page 
   await expect(page.locator('input[data-path-label]').first()).toHaveClass(/field-error/);
 
   await page.fill('input[data-path-label]', 'Main Path');
+  await expect(page.locator('input[data-path-label]').first()).not.toHaveClass(/field-error/);
   await page.click('[data-step-next]');
   await expect(page.locator('[data-step-error]')).toHaveCount(0);
   await expect(page.locator('[data-step-link="security"]')).toHaveClass(/is-active/);
+});
+
+test('does not show password error on security step until next is clicked', async ({ page }) => {
+  await page.goto('/');
+  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
+  await page.click('[data-step-next]');
+  await page.click('[data-step-next]');
+
+  const passwordInput = page.locator('input[data-password]');
+  await expect(passwordInput).not.toHaveClass(/field-error/);
+
+  await page.click('[data-step-next]');
+  await expect(page.locator('[data-step-error]')).toContainText(/Password is required/i);
+  await expect(passwordInput).toHaveClass(/field-error/);
+
+  await passwordInput.fill('ValidPassword123!');
+  await expect(passwordInput).not.toHaveClass(/field-error/);
+});
+
+test('shamir mode shows generate button and renders shares after generate', async ({ page }, testInfo) => {
+  await page.goto('/');
+  await generateVault(page);
+
+  await goToStep(page, 'security');
+  await page.check('input[value="shamir"]');
+  await page.evaluate(() => {
+    (window as Window & { __securitySectionRef?: Element | null }).__securitySectionRef =
+      document.querySelector('.wizard-card');
+  });
+  await page.fill('input[data-threshold]', '2');
+  await page.fill('input[data-total]', '3');
+  const sameSecuritySectionAfterShamirInputs = await page.evaluate(
+    () =>
+      (window as Window & { __securitySectionRef?: Element | null }).__securitySectionRef ===
+      document.querySelector('.wizard-card')
+  );
+  expect(sameSecuritySectionAfterShamirInputs).toBe(true);
+  await expect(page.locator('[data-step-next]')).toBeDisabled();
+  await prepareShamirShares(page);
+  await expect(page.locator('[data-step-next]')).toBeEnabled();
+  await goToStep(page, 'finalize');
+
+  const generateButton = page.locator('[data-generate]');
+  await expect(generateButton).toBeVisible();
+  await expect(generateButton).toHaveText(/Generate Vault/i);
+
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    generateButton.click()
+  ]);
+  await download.saveAs(testInfo.outputPath('vault-shamir-generate-visibility.html'));
+
+  await expect(page.locator('.shares h3')).toHaveText(/Shamir Shares/i);
+  await expect(page.locator('.share')).toHaveCount(3);
 });
