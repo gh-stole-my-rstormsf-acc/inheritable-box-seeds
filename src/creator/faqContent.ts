@@ -142,7 +142,7 @@ export const FAQ_CATEGORIES: FaqCategory[] = [
         id: 'wizard-flow-back-navigation',
         question: 'Will Back reset what I entered?',
         answer:
-          'No. Moving backward keeps state in memory, so previously entered fields remain unless you explicitly remove seeds, paths, or files.'
+          'No. Before generation, Back keeps state in memory so previous fields stay populated. After generation, Back is disabled for the session.'
       },
       {
         id: 'wizard-flow-finalize-gate',
@@ -154,7 +154,7 @@ export const FAQ_CATEGORIES: FaqCategory[] = [
         id: 'wizard-flow-state-after-generate',
         question: 'What happens to creator input after generating?',
         answer:
-          'Sensitive fields are cleared after successful generation while generated artifacts remain available for download via Finalize controls.'
+          'Sensitive fields are cleared after successful generation, generation/back controls are locked for the session, and download artifacts remain available on Finalize.'
       }
     ]
   },
@@ -442,7 +442,7 @@ export const FAQ_CATEGORIES: FaqCategory[] = [
         id: 'finalize-downloads-repeat-generation',
         question: 'Can I regenerate after making changes?',
         answer:
-          'Yes. Modify inputs as needed, satisfy validation/gating, and generate again to produce a new encrypted artifact set.'
+          'Not in the same session. After generation, controls stay locked; refresh and re-enter inputs to generate a new artifact set.'
       }
     ]
   },

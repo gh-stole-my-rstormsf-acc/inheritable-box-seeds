@@ -292,10 +292,38 @@ const el = <T extends HTMLElement>(
   return node;
 };
 
+const syncStatusUI = () => {
+  const root = document.querySelector<HTMLDivElement>('#app');
+  if (!root || state.view !== 'wizard') return false;
+
+  const shouldShowBanner = !(state.currentStep === 'finalize' && state.status === DEFAULT_STATUS_MESSAGE);
+  const banner = root.querySelector<HTMLDivElement>('[data-status-banner]');
+  if (shouldShowBanner) {
+    if (!banner) return false;
+    banner.className = `status status--banner ${state.statusTone}`;
+    banner.textContent = state.status;
+  } else if (banner) {
+    banner.remove();
+  }
+
+  if (state.currentStep !== 'finalize') return true;
+  const shouldShowFinalizeStatus = state.status !== DEFAULT_STATUS_MESSAGE;
+  const finalizeStatus = root.querySelector<HTMLDivElement>('[data-finalize-status]');
+  if (shouldShowFinalizeStatus) {
+    if (!finalizeStatus) return false;
+    finalizeStatus.className = `status ${state.statusTone}`;
+    finalizeStatus.textContent = state.status;
+  } else if (finalizeStatus) {
+    finalizeStatus.remove();
+  }
+  return true;
+};
+
 const setStatus = (message: string, tone: 'info' | 'error' = 'info') => {
   state.status = message;
   state.statusTone = tone;
-  render();
+  const statusSynced = syncStatusUI();
+  if (!statusSynced) render();
 };
 
 const getSelectedFaqCategory = () => {
@@ -790,6 +818,8 @@ const isShamirFinalizeBlocked = () =>
   state.encryption.mode === 'shamir' &&
   !hasPreparedShamirForCurrentState();
 
+const isPostGenerateLocked = () => Boolean(state.generated);
+
 const goToStep = (target: WizardStepId) => {
   const currentIndex = getStepIndex(state.currentStep);
   const targetIndex = getStepIndex(target);
@@ -864,6 +894,7 @@ const goToNextStep = () => {
 };
 
 const goToPreviousStep = () => {
+  if (isPostGenerateLocked()) return;
   const currentIndex = getStepIndex(state.currentStep);
   if (currentIndex <= 0) return;
   state.currentStep = WIZARD_STEPS[currentIndex - 1].id;
@@ -1050,6 +1081,10 @@ const schedulePreview = (seed: SeedForm, path: PathForm) => {
 
 const handleGenerate = async () => {
   if (state.isGenerating) return;
+  if (isPostGenerateLocked()) {
+    setStatus('Vault already generated for this session. Refresh to edit and regenerate.', 'info');
+    return;
+  }
   const errors = validateForm();
   if (errors.length) {
     setStatus(errors[0], 'error');
@@ -1397,6 +1432,20 @@ const syncFilesSectionUI = () => {
   currentSection.className = nextSection.className;
   currentSection.replaceChildren(...Array.from(nextSection.childNodes));
   bindFilesFieldListeners(currentSection);
+  return true;
+};
+
+const syncSecuritySectionUI = () => {
+  if (state.currentStep !== 'security') return false;
+  const currentSection = document.querySelector<HTMLElement>('[data-security-section]');
+  if (!currentSection) return false;
+
+  const nextSection = buildSecuritySection();
+  currentSection.className = nextSection.className;
+  currentSection.replaceChildren(...Array.from(nextSection.childNodes));
+  bindSecurityFieldListeners(currentSection);
+  bindShareDisplayListeners(currentSection);
+  syncSecurityNextButtonState();
   return true;
 };
 
@@ -1808,6 +1857,125 @@ const syncShamirPreparationUI = () => {
   syncSecurityNextButtonState();
 };
 
+const bindSecurityFieldListeners = (scope: ParentNode) => {
+  scope.querySelectorAll<HTMLInputElement>('input[name="mode"]').forEach((input) => {
+    input.addEventListener('change', () => {
+      state.encryption.mode = input.value as 'password' | 'shamir';
+      const sectionPatched = syncSecuritySectionUI();
+      if (!sectionPatched) render();
+    });
+  });
+
+  scope.querySelector<HTMLInputElement>('[data-password]')?.addEventListener('input', (event) => {
+    const value = (event.target as HTMLInputElement).value;
+    state.encryption.password = value;
+    const strengthEl = scope.querySelector<HTMLSpanElement>('[data-strength]');
+    if (strengthEl) strengthEl.textContent = String(passwordStrength(value));
+    syncSecurityFieldErrorUI();
+  });
+
+  scope.querySelector<HTMLInputElement>('[data-password-visibility]')?.addEventListener('change', (event) => {
+    state.securityShowPasswords = (event.target as HTMLInputElement).checked;
+    syncSecurityPasswordVisibilityUI();
+  });
+
+  scope.querySelector<HTMLSelectElement>('[data-argon-preset]')?.addEventListener('change', (event) => {
+    state.encryption.argonPresetId = (event.target as HTMLSelectElement).value as 'default' | 'high' | 'custom';
+    syncArgonPresetUI();
+  });
+
+  scope.querySelector<HTMLInputElement>('[data-argon-time]')?.addEventListener('input', (event) => {
+    state.encryption.argonCustom.timeCost = Number((event.target as HTMLInputElement).value);
+    const helper = scope.querySelector<HTMLParagraphElement>('[data-argon-error]');
+    if (helper) {
+      const validation = validateArgon2Params(state.encryption.argonCustom);
+      helper.textContent = validation.valid ? 'Custom parameters look good.' : validation.error ?? '';
+      helper.classList.toggle('error', !validation.valid);
+    }
+    syncSecurityFieldErrorUI();
+  });
+
+  scope.querySelector<HTMLInputElement>('[data-argon-memory]')?.addEventListener('input', (event) => {
+    state.encryption.argonCustom.memoryCostMB = Number((event.target as HTMLInputElement).value);
+    const helper = scope.querySelector<HTMLParagraphElement>('[data-argon-error]');
+    if (helper) {
+      const validation = validateArgon2Params(state.encryption.argonCustom);
+      helper.textContent = validation.valid ? 'Custom parameters look good.' : validation.error ?? '';
+      helper.classList.toggle('error', !validation.valid);
+    }
+    syncSecurityFieldErrorUI();
+  });
+
+  scope.querySelector<HTMLInputElement>('[data-argon-parallelism]')?.addEventListener('input', (event) => {
+    state.encryption.argonCustom.parallelism = Number((event.target as HTMLInputElement).value);
+    const helper = scope.querySelector<HTMLParagraphElement>('[data-argon-error]');
+    if (helper) {
+      const validation = validateArgon2Params(state.encryption.argonCustom);
+      helper.textContent = validation.valid ? 'Custom parameters look good.' : validation.error ?? '';
+      helper.classList.toggle('error', !validation.valid);
+    }
+    syncSecurityFieldErrorUI();
+  });
+
+  scope.querySelector<HTMLInputElement>('[data-confirm]')?.addEventListener('input', (event) => {
+    state.encryption.confirm = (event.target as HTMLInputElement).value;
+    syncSecurityFieldErrorUI();
+  });
+
+  scope.querySelector<HTMLInputElement>('[data-hint]')?.addEventListener('input', (event) => {
+    state.encryption.hint = (event.target as HTMLInputElement).value;
+    invalidateShamirPreparation();
+    syncShamirPreparationUI();
+  });
+
+  scope.querySelector<HTMLInputElement>('[data-threshold]')?.addEventListener('input', (event) => {
+    const thresholdInput = event.target as HTMLInputElement;
+    state.encryption.threshold = Number(thresholdInput.value);
+    if (state.encryption.totalShares < state.encryption.threshold) {
+      state.encryption.totalShares = state.encryption.threshold;
+    }
+    const totalInput = scope.querySelector<HTMLInputElement>('[data-total]');
+    if (totalInput) {
+      totalInput.min = String(state.encryption.threshold);
+      if (Number(totalInput.value) < state.encryption.threshold) {
+        totalInput.value = String(state.encryption.threshold);
+      }
+    }
+    invalidateShamirPreparation();
+    syncSecurityFieldErrorUI();
+    syncShamirPreparationUI();
+  });
+
+  scope.querySelector<HTMLInputElement>('[data-total]')?.addEventListener('input', (event) => {
+    state.encryption.totalShares = Number((event.target as HTMLInputElement).value);
+    invalidateShamirPreparation();
+    syncSecurityFieldErrorUI();
+    syncShamirPreparationUI();
+  });
+
+  scope.querySelector<HTMLButtonElement>('[data-prepare-shamir]')?.addEventListener('click', () => {
+    prepareShamirShares();
+  });
+};
+
+const bindShareDisplayListeners = (scope: ParentNode) => {
+  scope.querySelectorAll<HTMLInputElement>('input[name="share-display"]').forEach((input) => {
+    input.addEventListener('change', () => {
+      const mode = input.value;
+      const sharesRoot = input.closest('.shares');
+      const shareElements = sharesRoot
+        ? sharesRoot.querySelectorAll<HTMLDivElement>('.share')
+        : document.querySelectorAll<HTMLDivElement>('.share');
+      shareElements.forEach((shareEl) => {
+        const textareas = shareEl.querySelectorAll<HTMLTextAreaElement>('textarea');
+        if (textareas.length < 2) return;
+        textareas[0].classList.toggle('hidden', mode !== 'words');
+        textareas[1].classList.toggle('hidden', mode !== 'hex');
+      });
+    });
+  });
+};
+
 const bindPathFieldListeners = (scope: ParentNode) => {
   scope.querySelectorAll<HTMLButtonElement>('[data-remove-path]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -1867,13 +2035,13 @@ const bindPathFieldListeners = (scope: ParentNode) => {
       const [seedId, pathId] = (input.dataset.pathValue ?? '').split(':');
       const seed = state.seeds.find((s) => s.id === seedId);
       const path = seed?.paths.find((p) => p.id === pathId);
-      if (path) {
+      if (path && seed) {
         invalidateShamirPreparation();
         path.path = input.value;
         path.preset = 'custom';
-        schedulePreview(seed!, path);
+        schedulePreview(seed, path);
+        syncPathPresetUI(seed, path);
       }
-      render();
     });
   });
 
@@ -2018,6 +2186,7 @@ const prepareShamirShares = () => {
     };
     state.stepError = '';
     setStatus('Shamir shares generated. Review them, then continue to Finalize.', 'info');
+    syncShamirPreparationUI();
   } catch (error) {
     setStatus((error as Error).message, 'error');
   }
@@ -2030,7 +2199,7 @@ const buildSecuritySection = () => {
       ? validateArgon2Params(state.encryption.argonCustom)
       : { valid: true };
 
-  const section = el('section', { className: 'card wizard-card' });
+  const section = el('section', { className: 'card wizard-card', dataset: { securitySection: '' } });
   section.appendChild(
     el('div', { className: 'card__header' }, [
       el('div', {}, [
@@ -2274,15 +2443,17 @@ const buildFinalizeSection = () => {
   section.appendChild(summary);
 
   if (state.status !== DEFAULT_STATUS_MESSAGE) {
-    section.appendChild(el('div', { className: `status ${state.statusTone}`, text: state.status }));
+    section.appendChild(
+      el('div', { className: `status ${state.statusTone}`, dataset: { finalizeStatus: '' }, text: state.status })
+    );
   }
 
   section.appendChild(
     el('button', {
       className: 'primary',
       dataset: { generate: '' },
-      disabled: state.isGenerating,
-      text: state.isGenerating ? 'Generating...' : 'Generate Vault'
+      disabled: state.isGenerating || isPostGenerateLocked(),
+      text: state.isGenerating ? 'Generating...' : isPostGenerateLocked() ? 'Vault Generated' : 'Generate Vault'
     })
   );
 
@@ -2335,7 +2506,7 @@ const buildWizardNavigation = () => {
     el('button', {
       className: 'ghost',
       dataset: { stepPrev: '' },
-      disabled: currentIndex === 0 || state.isGenerating,
+      disabled: currentIndex === 0 || state.isGenerating || isPostGenerateLocked(),
       text: currentIndex === 0 ? 'Back' : `Back: ${previousLabel}`
     })
   );
@@ -2517,7 +2688,9 @@ const buildApp = () => {
 
   main.appendChild(buildWizardStepper());
   if (!(state.currentStep === 'finalize' && state.status === DEFAULT_STATUS_MESSAGE)) {
-    main.appendChild(el('div', { className: `status status--banner ${state.statusTone}`, text: state.status }));
+    main.appendChild(
+      el('div', { className: `status status--banner ${state.statusTone}`, dataset: { statusBanner: '' }, text: state.status })
+    );
   }
   main.appendChild(buildCurrentStepPanel());
   main.appendChild(buildWizardNavigation());
@@ -2596,119 +2769,13 @@ const render = () => {
 
   bindPathFieldListeners(root);
 
-  root.querySelectorAll<HTMLInputElement>('input[name="mode"]').forEach((input) => {
-    input.addEventListener('change', () => {
-      state.encryption.mode = input.value as 'password' | 'shamir';
-      render();
-    });
-  });
-
-  root.querySelector<HTMLInputElement>('[data-password]')?.addEventListener('input', (event) => {
-    const value = (event.target as HTMLInputElement).value;
-    state.encryption.password = value;
-    const strengthEl = root.querySelector<HTMLSpanElement>('[data-strength]');
-    if (strengthEl) strengthEl.textContent = String(passwordStrength(value));
-    syncSecurityFieldErrorUI();
-  });
-
-  root.querySelector<HTMLInputElement>('[data-password-visibility]')?.addEventListener('change', (event) => {
-    state.securityShowPasswords = (event.target as HTMLInputElement).checked;
-    syncSecurityPasswordVisibilityUI();
-  });
-
-  root.querySelector<HTMLSelectElement>('[data-argon-preset]')?.addEventListener('change', (event) => {
-    state.encryption.argonPresetId = (event.target as HTMLSelectElement).value as 'default' | 'high' | 'custom';
-    syncArgonPresetUI();
-  });
-
-  root.querySelector<HTMLInputElement>('[data-argon-time]')?.addEventListener('input', (event) => {
-    state.encryption.argonCustom.timeCost = Number((event.target as HTMLInputElement).value);
-    const helper = root.querySelector<HTMLParagraphElement>('[data-argon-error]');
-    if (helper) {
-      const validation = validateArgon2Params(state.encryption.argonCustom);
-      helper.textContent = validation.valid ? 'Custom parameters look good.' : validation.error ?? '';
-      helper.classList.toggle('error', !validation.valid);
-    }
-    syncSecurityFieldErrorUI();
-  });
-
-  root.querySelector<HTMLInputElement>('[data-argon-memory]')?.addEventListener('input', (event) => {
-    state.encryption.argonCustom.memoryCostMB = Number((event.target as HTMLInputElement).value);
-    const helper = root.querySelector<HTMLParagraphElement>('[data-argon-error]');
-    if (helper) {
-      const validation = validateArgon2Params(state.encryption.argonCustom);
-      helper.textContent = validation.valid ? 'Custom parameters look good.' : validation.error ?? '';
-      helper.classList.toggle('error', !validation.valid);
-    }
-    syncSecurityFieldErrorUI();
-  });
-
-  root.querySelector<HTMLInputElement>('[data-argon-parallelism]')?.addEventListener('input', (event) => {
-    state.encryption.argonCustom.parallelism = Number((event.target as HTMLInputElement).value);
-    const helper = root.querySelector<HTMLParagraphElement>('[data-argon-error]');
-    if (helper) {
-      const validation = validateArgon2Params(state.encryption.argonCustom);
-      helper.textContent = validation.valid ? 'Custom parameters look good.' : validation.error ?? '';
-      helper.classList.toggle('error', !validation.valid);
-    }
-    syncSecurityFieldErrorUI();
-  });
-
-  root.querySelector<HTMLInputElement>('[data-confirm]')?.addEventListener('input', (event) => {
-    state.encryption.confirm = (event.target as HTMLInputElement).value;
-    syncSecurityFieldErrorUI();
-  });
-
-  root.querySelector<HTMLInputElement>('[data-hint]')?.addEventListener('input', (event) => {
-    state.encryption.hint = (event.target as HTMLInputElement).value;
-    invalidateShamirPreparation();
-    syncShamirPreparationUI();
-  });
-
-  root.querySelector<HTMLInputElement>('[data-threshold]')?.addEventListener('input', (event) => {
-    const thresholdInput = event.target as HTMLInputElement;
-    state.encryption.threshold = Number(thresholdInput.value);
-    if (state.encryption.totalShares < state.encryption.threshold) {
-      state.encryption.totalShares = state.encryption.threshold;
-    }
-    const totalInput = root.querySelector<HTMLInputElement>('[data-total]');
-    if (totalInput) {
-      totalInput.min = String(state.encryption.threshold);
-      if (Number(totalInput.value) < state.encryption.threshold) {
-        totalInput.value = String(state.encryption.threshold);
-      }
-    }
-    invalidateShamirPreparation();
-    syncSecurityFieldErrorUI();
-    syncShamirPreparationUI();
-  });
-
-  root.querySelector<HTMLInputElement>('[data-total]')?.addEventListener('input', (event) => {
-    state.encryption.totalShares = Number((event.target as HTMLInputElement).value);
-    invalidateShamirPreparation();
-    syncSecurityFieldErrorUI();
-    syncShamirPreparationUI();
-  });
-
-  root.querySelector<HTMLButtonElement>('[data-prepare-shamir]')?.addEventListener('click', () => {
-    prepareShamirShares();
-  });
+  bindSecurityFieldListeners(root);
 
   root.querySelector<HTMLButtonElement>('[data-generate]')?.addEventListener('click', handleGenerate);
   root.querySelector<HTMLButtonElement>('[data-download-vault-html]')?.addEventListener('click', handleDownloadVaultHtml);
   root.querySelector<HTMLButtonElement>('[data-download-cipher-md]')?.addEventListener('click', handleDownloadCipherMd);
 
-  root.querySelectorAll<HTMLInputElement>('input[name="share-display"]').forEach((input) => {
-    input.addEventListener('change', () => {
-      const mode = input.value;
-      root.querySelectorAll<HTMLDivElement>('.share').forEach((shareEl) => {
-        const textareas = shareEl.querySelectorAll<HTMLTextAreaElement>('textarea');
-        if (textareas.length < 2) return;
-        textareas[0].classList.toggle('hidden', mode !== 'words');
-        textareas[1].classList.toggle('hidden', mode !== 'hex');
-      });
-    });
-  });
+  bindShareDisplayListeners(root);
 };
 
 export const renderCreatorApp = () => {

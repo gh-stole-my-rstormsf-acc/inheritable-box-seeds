@@ -493,6 +493,26 @@ test('changing path preset does not replace paths section', async ({ page }) => 
   await expect(page.locator('input[data-path-label]').first()).toHaveValue('[Seed 1] Ledger Legacy 1');
 });
 
+test('editing path value does not replace paths section', async ({ page }) => {
+  await page.goto('/');
+  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
+  await goToStep(page, 'paths');
+
+  await page.evaluate(() => {
+    (window as Window & { __pathsSectionRef?: Element | null }).__pathsSectionRef =
+      document.querySelector('[data-paths-section]');
+  });
+
+  await page.fill('input[data-path-value]', "m/44'/60'/0'/0/x");
+  const sameSectionAfterPathEdit = await page.evaluate(
+    () =>
+      (window as Window & { __pathsSectionRef?: Element | null }).__pathsSectionRef ===
+      document.querySelector('[data-paths-section]')
+  );
+  expect(sameSectionAfterPathEdit).toBe(true);
+  await expect(page.locator('[data-path-status]').first()).toContainText(/Path valid/i);
+});
+
 test('changing security preset does not replace security section', async ({ page }) => {
   await page.goto('/');
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
@@ -512,6 +532,35 @@ test('changing security preset does not replace security section', async ({ page
   expect(sameSectionAfterPresetChange).toBe(true);
   await expect(page.locator('[data-argon-custom]')).toBeVisible();
   await expect(page.locator('[data-argon-preset-hint]')).toBeHidden();
+});
+
+test('changing security mode does not replace security section', async ({ page }) => {
+  await page.goto('/');
+  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
+  await goToStep(page, 'security');
+
+  await page.evaluate(() => {
+    (window as Window & { __securitySectionRef?: Element | null }).__securitySectionRef =
+      document.querySelector('[data-security-section]');
+  });
+
+  await page.check('input[value="shamir"]');
+  const sameSectionAfterShamirToggle = await page.evaluate(
+    () =>
+      (window as Window & { __securitySectionRef?: Element | null }).__securitySectionRef ===
+      document.querySelector('[data-security-section]')
+  );
+  expect(sameSectionAfterShamirToggle).toBe(true);
+  await expect(page.locator('[data-threshold]')).toBeVisible();
+
+  await page.check('input[value="password"]');
+  const sameSectionAfterPasswordToggle = await page.evaluate(
+    () =>
+      (window as Window & { __securitySectionRef?: Element | null }).__securitySectionRef ===
+      document.querySelector('[data-security-section]')
+  );
+  expect(sameSectionAfterPasswordToggle).toBe(true);
+  await expect(page.locator('input[data-password]')).toBeVisible();
 });
 
 test('toggling encrypted files does not replace files section', async ({ page }) => {
@@ -687,6 +736,23 @@ test('shamir mode shows generate button and renders shares after generate', asyn
 
   await expect(page.locator('.shares h3')).toHaveText(/Shamir Shares/i);
   await expect(page.locator('.share')).toHaveCount(3);
+});
+
+test('finalize locks generate and back after successful generation', async ({ page }) => {
+  await page.goto('/');
+  await generateVault(page);
+  await fillPasswordFields(page);
+  await goToStep(page, 'finalize');
+
+  const generateButton = page.locator('[data-generate]');
+  const previousButton = page.locator('[data-step-prev]');
+  await expect(generateButton).toBeEnabled();
+  await expect(previousButton).toBeEnabled();
+
+  await generateButton.click();
+  await expect(page.locator('[data-download-vault-html]')).toBeEnabled();
+  await expect(generateButton).toBeDisabled();
+  await expect(previousButton).toBeDisabled();
 });
 
 test('creator FAQ view toggles from header and renders category accordion', async ({ page }) => {
