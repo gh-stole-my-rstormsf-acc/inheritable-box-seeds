@@ -1,6 +1,6 @@
 import { deriveEvmAddresses } from '../shared/derivation/evm';
 import { buildAddressCsv } from '../shared/derivation/csv';
-import type { Vault, VaultData, PathConfig } from '../shared/types';
+import type { Vault, VaultData, PathConfig, VaultFileEntry } from '../shared/types';
 let vault: Vault;
 let root: HTMLElement;
 
@@ -127,6 +127,24 @@ const setStatus = (message: string, tone: 'info' | 'error' = 'info') => {
   status.dataset.tone = tone;
 };
 
+const formatBytes = (value: number) => {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(2)} MB`;
+};
+
+const decodeBase64 = (value: string) => {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+};
+
+const sanitizeDownloadName = (value: string) =>
+  value.replace(/[\\/]/g, '-').replace(/[^\w.\- ]+/g, '').trim() || 'vault-file.bin';
+
 const attachRevealHandlers = (scope: ParentNode) => {
   scope.querySelectorAll<HTMLButtonElement>('[data-reveal]').forEach((button) => {
     let timeoutId: number | undefined;
@@ -215,6 +233,77 @@ const renderSeedList = (data: VaultData) => {
   });
 
   attachRevealHandlers(container);
+};
+
+const renderVaultFiles = (data?: VaultData) => {
+  const container = document.querySelector<HTMLDivElement>('[data-files]');
+  if (!container) return;
+  container.replaceChildren();
+
+  if (!data) {
+    container.appendChild(el('p', { className: 'vault-files__empty', text: 'Decrypt vault to view attached files.' }));
+    return;
+  }
+
+  const files = data.files ?? [];
+  if (!files.length) {
+    container.appendChild(el('p', { className: 'vault-files__empty', text: 'No attached files in this vault.' }));
+    return;
+  }
+
+  const tableWrap = el('div', { className: 'vault-files__table-wrap' });
+  const table = el<HTMLTableElement>('table', { className: 'vault-files__table' });
+  const head = el('thead');
+  const headRow = el('tr');
+  headRow.appendChild(el('th', { text: 'Label' }));
+  headRow.appendChild(el('th', { text: 'File' }));
+  headRow.appendChild(el('th', { text: 'Size' }));
+  headRow.appendChild(el('th', { text: 'Type' }));
+  headRow.appendChild(el('th', { text: 'Open Hint' }));
+  headRow.appendChild(el('th', { text: 'Download' }));
+  head.appendChild(headRow);
+  table.appendChild(head);
+
+  const body = el('tbody');
+  files.forEach((file: VaultFileEntry, index) => {
+    const row = el('tr');
+    row.appendChild(el('td', { className: 'vault-files__label', text: file.label.trim() || file.fileName }));
+    row.appendChild(el('td', { text: file.fileName }));
+    row.appendChild(el('td', { text: formatBytes(file.size) }));
+    row.appendChild(el('td', { text: file.mimeType || 'application/octet-stream' }));
+    row.appendChild(el('td', { className: 'vault-files__hint', text: file.openHint?.trim() || '[none]' }));
+    const actionCell = el('td');
+    actionCell.appendChild(
+      el('button', {
+        dataset: { downloadVaultFile: String(index) },
+        text: 'Download'
+      })
+    );
+    row.appendChild(actionCell);
+    body.appendChild(row);
+  });
+  table.appendChild(body);
+  tableWrap.appendChild(table);
+  container.appendChild(tableWrap);
+
+  container.querySelectorAll<HTMLButtonElement>('[data-download-vault-file]').forEach((button) => {
+    button.addEventListener('click', () => {
+      if (!state.decrypted) return;
+      const index = Number(button.dataset.downloadVaultFile);
+      const target = state.decrypted.files?.[index];
+      if (!target) return;
+      const blob = new Blob([decodeBase64(target.dataBase64)], {
+        type: target.mimeType || 'application/octet-stream'
+      });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = sanitizeDownloadName(target.fileName);
+      anchor.click();
+      URL.revokeObjectURL(url);
+      scheduleAutoClear();
+    });
+  });
 };
 
 const renderDerivedAddresses = () => {
@@ -401,6 +490,7 @@ const clearDecryptedState = (reason: 'user' | 'timeout' | 'unload', silent = fal
   if (seeds) seeds.replaceChildren();
   const derived = document.querySelector('[data-derived]');
   if (derived) derived.replaceChildren();
+  renderVaultFiles(undefined);
   if (!silent) {
     setStatus(reason === 'timeout' ? 'Decrypted data cleared due to inactivity.' : 'Decrypted data cleared.', 'info');
   }
@@ -439,6 +529,15 @@ const renderApp = (handlers: VaultRuntimeHandlers) => {
     el('div', { dataset: { seeds: '' } })
   ]);
 
+  const filesSection = el('section', { className: 'vault-card' }, [
+    el('h2', { text: 'Attached Files' }),
+    el('p', {
+      className: 'hint',
+      text: 'Each file was encrypted inside the vault payload. Download only after decrypting.'
+    }),
+    el('div', { dataset: { files: '' } })
+  ]);
+
   const derivedSection = el('section', { className: 'vault-card' });
   derivedSection.appendChild(el('h2', { text: 'Derived Addresses' }));
   derivedSection.appendChild(
@@ -451,6 +550,7 @@ const renderApp = (handlers: VaultRuntimeHandlers) => {
 
   main.appendChild(decryptSection);
   main.appendChild(seedsSection);
+  main.appendChild(filesSection);
   main.appendChild(derivedSection);
   root.replaceChildren(main);
 
@@ -503,6 +603,7 @@ const renderApp = (handlers: VaultRuntimeHandlers) => {
         state.decrypted = data;
         setStatus('Vault decrypted.', 'info');
         renderSeedList(data);
+        renderVaultFiles(data);
         passwordInput.value = '';
         scheduleAutoClear();
       } catch (error) {
@@ -562,6 +663,7 @@ const renderApp = (handlers: VaultRuntimeHandlers) => {
         state.decrypted = data;
         setStatus('Vault decrypted.', 'info');
         renderSeedList(data);
+        renderVaultFiles(data);
         shareInputs.forEach((input) => (input.value = ''));
         scheduleAutoClear();
       } catch (error) {
@@ -577,6 +679,7 @@ const renderApp = (handlers: VaultRuntimeHandlers) => {
     clearDecryptedState('user');
   });
 
+  renderVaultFiles(state.decrypted);
   renderDerivedAddresses();
 };
 

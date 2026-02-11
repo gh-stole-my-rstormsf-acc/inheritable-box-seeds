@@ -109,7 +109,7 @@ body::before {
 
 .wizard-steps {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: var(--space-3);
   animation: reveal 640ms var(--ease-smooth) both;
 }
@@ -592,6 +592,53 @@ button:hover:not(:disabled) {
   color: #b8d0ed;
 }
 
+.files-toggle-row {
+  margin-top: var(--space-4);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.56rem;
+  color: #cce1f9;
+  font-size: var(--text-sm);
+}
+
+.files-toggle-row input {
+  width: auto;
+  margin-top: 0;
+}
+
+.vault-files-list {
+  margin-top: var(--space-4);
+  display: grid;
+  gap: var(--space-3);
+}
+
+.vault-file {
+  border: 1px solid rgba(107, 160, 226, 0.34);
+  border-radius: var(--radius-md);
+  background:
+    radial-gradient(circle at 100% 0%, rgba(50, 144, 242, 0.12), transparent 54%),
+    linear-gradient(145deg, rgba(10, 25, 47, 0.84), rgba(9, 21, 40, 0.78));
+  padding: var(--space-4);
+}
+
+.vault-file__header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  align-items: center;
+}
+
+.vault-file__meta {
+  margin: 0;
+  color: #abc8eb;
+  font-size: var(--text-sm);
+  word-break: break-word;
+}
+
+.vault-file__header button {
+  margin-top: 0;
+}
+
 .finalize-downloads {
   margin-top: var(--space-3);
   display: flex;
@@ -668,7 +715,8 @@ button:hover:not(:disabled) {
   .card__header,
   .seed__header,
   .path__header,
-  .paths__header {
+  .paths__header,
+  .vault-file__header {
     flex-direction: column;
     align-items: flex-start;
   }

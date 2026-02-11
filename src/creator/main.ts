@@ -5,7 +5,7 @@ import { encryptWithPassword, encryptWithShamir } from '../shared/crypto/vault';
 import { buildVaultHtml } from '../vault/template';
 import { buildCiphertextMarkdown } from './cipherMarkdown';
 import { formatShareHex, formatShareMnemonic } from '../shared/crypto/shamir';
-import type { VaultData } from '../shared/types';
+import type { VaultData, VaultFileEntry } from '../shared/types';
 import { deriveKeyArgon2Worker } from './crypto/argon2Worker';
 import { validateArgon2Params, DEFAULT_ARGON2_MIN } from './validation/argon2';
 import { canRemovePath, getOnlyPathTooltip, getTotalPreviewCount, shouldShowLargePreviewWarning } from './pathUi';
@@ -32,6 +32,16 @@ interface SeedForm {
   paths: PathForm[];
 }
 
+interface FileForm {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  label: string;
+  openHint: string;
+  dataBase64: string;
+}
+
 interface EncryptionState {
   mode: 'password' | 'shamir';
   password: string;
@@ -51,6 +61,8 @@ interface GeneratedState {
   vaultHtml: string;
   cipherMd: string;
   shares: Array<{ id: number; words: string; hex: string }>;
+  fileCount: number;
+  totalFileBytes: number;
 }
 
 interface PreparedShamirState {
@@ -58,9 +70,11 @@ interface PreparedShamirState {
   vaultHtml: string;
   cipherMd: string;
   shares: Array<{ id: number; words: string; hex: string }>;
+  fileCount: number;
+  totalFileBytes: number;
 }
 
-type WizardStepId = 'seeds' | 'paths' | 'security' | 'finalize';
+type WizardStepId = 'seeds' | 'files' | 'paths' | 'security' | 'finalize';
 
 interface WizardStep {
   id: WizardStepId;
@@ -78,6 +92,11 @@ const WIZARD_STEPS: WizardStep[] = [
     id: 'paths',
     title: 'Paths',
     subtitle: 'Derivation paths and passphrases'
+  },
+  {
+    id: 'files',
+    title: 'Files',
+    subtitle: 'Optional encrypted attachments'
   },
   {
     id: 'security',
@@ -130,9 +149,13 @@ if (FAST_CRYPTO_FLAG && import.meta.env.PROD) {
 const FAST_CRYPTO = FAST_CRYPTO_FLAG && !import.meta.env.PROD;
 const FAST_PARAMS = { timeCost: 2, memoryCostMB: 1, parallelism: 1 };
 const DEFAULT_STATUS_MESSAGE = 'Complete each step to generate your vault.';
+const MAX_VAULT_FILE_COUNT = 12;
+const MAX_VAULT_TOTAL_FILE_BYTES = 25 * 1024 * 1024;
 
 const state = {
   seeds: [createSeed(0)],
+  fileAttachmentsEnabled: false,
+  files: [] as FileForm[],
   encryption: {
     mode: 'password',
     password: '',
@@ -155,6 +178,7 @@ const state = {
   progress: 0,
   stepError: '',
   seedValidationArmed: false,
+  filesValidationArmed: false,
   pathValidationArmed: false,
   securityValidationArmed: false,
   currentStep: 'seeds' as WizardStepId
@@ -321,6 +345,87 @@ const downloadFile = (content: string, filename: string, mimeType: string) => {
   URL.revokeObjectURL(url);
 };
 
+const formatBytes = (value: number) => {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(2)} MB`;
+};
+
+const toBase64 = (bytes: Uint8Array) => {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.subarray(index, index + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+};
+
+const sanitizeFileName = (value: string) =>
+  value.replace(/[\\/]/g, '-').replace(/[^\w.\- ]+/g, '').trim() || 'vault-file.bin';
+
+const inferOpenHint = (fileName: string) => {
+  const normalized = fileName.toLowerCase();
+  if (normalized.endsWith('.kdbx')) {
+    return 'KeePass database. Open with KeePassXC, KeePass, or compatible apps.';
+  }
+  if (normalized.endsWith('.1pux') || normalized.endsWith('.1pif')) {
+    return '1Password export. Import in 1Password or inspect with trusted archive tools.';
+  }
+  if (normalized.endsWith('.json')) {
+    return 'JSON export. Open in a trusted editor before importing into a password manager.';
+  }
+  if (normalized.endsWith('.csv')) {
+    return 'CSV export. Verify columns before importing into a password manager.';
+  }
+  if (normalized.endsWith('.zip')) {
+    return 'Archive export. Open with trusted unzip tools and inspect contents offline.';
+  }
+  return 'Open this file with the originating app or trusted offline tooling.';
+};
+
+const getEffectiveFiles = () => (state.fileAttachmentsEnabled ? state.files : []);
+
+const buildFileBundleSummary = (data: VaultData) => ({
+  fileCount: data.files?.length ?? 0,
+  totalFileBytes: (data.files ?? []).reduce((sum, file) => sum + file.size, 0)
+});
+
+const addSelectedFiles = async (inputFiles: File[]) => {
+  if (!inputFiles.length) return;
+  const currentFiles = getEffectiveFiles();
+  if (currentFiles.length + inputFiles.length > MAX_VAULT_FILE_COUNT) {
+    setStatus(`You can attach up to ${MAX_VAULT_FILE_COUNT} files.`, 'error');
+    return;
+  }
+
+  const totalBytes = currentFiles.reduce((sum, file) => sum + file.size, 0) + inputFiles.reduce((sum, file) => sum + file.size, 0);
+  if (totalBytes > MAX_VAULT_TOTAL_FILE_BYTES) {
+    setStatus(`Attached files exceed ${formatBytes(MAX_VAULT_TOTAL_FILE_BYTES)} total.`, 'error');
+    return;
+  }
+
+  const converted = await Promise.all(
+    inputFiles.map(async (file) => {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      return {
+        id: crypto.randomUUID(),
+        fileName: sanitizeFileName(file.name),
+        mimeType: file.type || 'application/octet-stream',
+        size: file.size,
+        label: sanitizeFileName(file.name),
+        openHint: inferOpenHint(file.name),
+        dataBase64: toBase64(bytes)
+      } as FileForm;
+    })
+  );
+
+  state.files.push(...converted);
+  invalidateShamirPreparation();
+  render();
+  setStatus(`Attached ${converted.length} file${converted.length === 1 ? '' : 's'} for encryption.`, 'info');
+};
+
 const md5Hex = (input: string) => {
   const data = new TextEncoder().encode(input);
   const originalLength = data.length;
@@ -405,6 +510,7 @@ const md5Hex = (input: string) => {
 interface FieldErrorState {
   seedLabel: Set<string>;
   seedMnemonic: Set<string>;
+  fileLabel: Set<string>;
   pathLabel: Set<string>;
   pathValue: Set<string>;
   pathPassphraseLabel: Set<string>;
@@ -423,6 +529,7 @@ const getPathFieldKey = (seedId: string, pathId: string) => `${seedId}:${pathId}
 const emptyFieldErrors = (): FieldErrorState => ({
   seedLabel: new Set<string>(),
   seedMnemonic: new Set<string>(),
+  fileLabel: new Set<string>(),
   pathLabel: new Set<string>(),
   pathValue: new Set<string>(),
   pathPassphraseLabel: new Set<string>(),
@@ -439,6 +546,7 @@ const emptyFieldErrors = (): FieldErrorState => ({
 const collectFieldErrors = (): FieldErrorState => {
   const fieldErrors = emptyFieldErrors();
   const labelCounts = new Map<string, number>();
+  const shouldValidateFiles = state.filesValidationArmed;
   const shouldValidatePaths = state.pathValidationArmed;
   const shouldValidateSecurity = state.securityValidationArmed;
 
@@ -464,6 +572,14 @@ const collectFieldErrors = (): FieldErrorState => {
       });
     }
   });
+
+  if (shouldValidateFiles && state.fileAttachmentsEnabled) {
+    state.files.forEach((file) => {
+      if (!file.label.trim()) {
+        fieldErrors.fileLabel.add(file.id);
+      }
+    });
+  }
 
   state.seeds.forEach((seed) => {
     const label = seed.label.trim();
@@ -545,6 +661,32 @@ const validatePathsSection = () => {
   return errors;
 };
 
+const validateFilesSection = () => {
+  const errors: string[] = [];
+  if (!state.fileAttachmentsEnabled) return errors;
+
+  if (state.files.length === 0) {
+    errors.push('Attach at least one file or disable encrypted file attachments.');
+  }
+
+  if (state.files.length > MAX_VAULT_FILE_COUNT) {
+    errors.push(`You can attach up to ${MAX_VAULT_FILE_COUNT} files.`);
+  }
+
+  const totalBytes = state.files.reduce((sum, file) => sum + file.size, 0);
+  if (totalBytes > MAX_VAULT_TOTAL_FILE_BYTES) {
+    errors.push(`Attached files exceed ${formatBytes(MAX_VAULT_TOTAL_FILE_BYTES)} total.`);
+  }
+
+  state.files.forEach((file) => {
+    if (!file.label.trim()) {
+      errors.push(`File label is required for "${file.fileName}".`);
+    }
+  });
+
+  return errors;
+};
+
 const validateSecuritySection = () => {
   const errors: string[] = [];
 
@@ -568,10 +710,16 @@ const validateSecuritySection = () => {
   return errors;
 };
 
-const validateForm = () => [...validateSeedsSection(), ...validatePathsSection(), ...validateSecuritySection()];
+const validateForm = () => [
+  ...validateSeedsSection(),
+  ...validateFilesSection(),
+  ...validatePathsSection(),
+  ...validateSecuritySection()
+];
 
 const validationErrorForStep = (stepId: WizardStepId) => {
   if (stepId === 'seeds') return validateSeedsSection()[0];
+  if (stepId === 'files') return validateFilesSection()[0];
   if (stepId === 'paths') return validatePathsSection()[0];
   if (stepId === 'security') return validateSecuritySection()[0];
   return undefined;
@@ -598,6 +746,9 @@ const goToStep = (target: WizardStepId) => {
     const step = WIZARD_STEPS[index];
     if (step.id === 'seeds') {
       state.seedValidationArmed = true;
+    }
+    if (step.id === 'files') {
+      state.filesValidationArmed = true;
     }
     if (step.id === 'paths') {
       state.pathValidationArmed = true;
@@ -628,6 +779,9 @@ const goToNextStep = () => {
   if (currentIndex === WIZARD_STEPS.length - 1) return;
   if (state.currentStep === 'seeds') {
     state.seedValidationArmed = true;
+  }
+  if (state.currentStep === 'files') {
+    state.filesValidationArmed = true;
   }
   if (state.currentStep === 'paths') {
     state.pathValidationArmed = true;
@@ -670,7 +824,17 @@ const buildVaultData = (): VaultData => ({
       passphraseLabel: path.passphrase ? path.passphraseLabel.trim() : '',
       deriveCount: path.deriveCount
     }))
-  }))
+  })),
+  files: getEffectiveFiles().length
+    ? getEffectiveFiles().map((file): VaultFileEntry => ({
+        label: file.label.trim(),
+        fileName: sanitizeFileName(file.fileName),
+        mimeType: file.mimeType,
+        size: file.size,
+        openHint: file.openHint.trim(),
+        dataBase64: file.dataBase64
+      }))
+    : undefined
 });
 
 const buildShamirFingerprint = (data: VaultData) =>
@@ -700,6 +864,8 @@ const clearSensitiveState = () => {
   }));
   state.encryption.password = '';
   state.encryption.confirm = '';
+  state.fileAttachmentsEnabled = false;
+  state.files = [];
   render();
 };
 
@@ -843,6 +1009,7 @@ const handleGenerate = async () => {
     };
 
     if (state.encryption.mode === 'password') {
+      const fileSummary = buildFileBundleSummary(data);
       const vault = await encryptWithPassword({
         password: state.encryption.password,
         data,
@@ -852,11 +1019,13 @@ const handleGenerate = async () => {
         onProgress
       });
       const html = buildVaultHtml(vault);
-      const cipherMd = buildCiphertextMarkdown(vault);
+      const cipherMd = buildCiphertextMarkdown(vault, fileSummary);
       state.generated = {
         vaultHtml: html,
         cipherMd,
-        shares: []
+        shares: [],
+        fileCount: fileSummary.fileCount,
+        totalFileBytes: fileSummary.totalFileBytes
       };
       setStatus('Vault generated. Use the download buttons below.', 'info');
     } else {
@@ -867,7 +1036,9 @@ const handleGenerate = async () => {
       state.generated = {
         vaultHtml: prepared.vaultHtml,
         cipherMd: prepared.cipherMd,
-        shares: prepared.shares
+        shares: prepared.shares,
+        fileCount: prepared.fileCount,
+        totalFileBytes: prepared.totalFileBytes
       };
       setStatus('Vault generated. Use the download buttons below.', 'info');
     }
@@ -994,6 +1165,118 @@ const buildSeedsSection = () => {
   return section;
 };
 
+const buildFileCard = (file: FileForm, fieldErrors: FieldErrorState) => {
+  const card = el('div', { className: 'vault-file', dataset: { vaultFile: file.id } });
+  const metaText = `${file.fileName} • ${formatBytes(file.size)} • ${file.mimeType || 'application/octet-stream'}`;
+  card.appendChild(
+    el('div', { className: 'vault-file__header' }, [
+      el('p', { className: 'vault-file__meta', text: metaText }),
+      el('button', { className: 'ghost', dataset: { removeVaultFile: file.id }, text: 'Remove' })
+    ])
+  );
+
+  card.appendChild(el('label', { text: 'Display Label' }));
+  card.appendChild(
+    el('input', {
+      className: hasFieldError(fieldErrors, 'fileLabel', file.id) ? 'field-error' : undefined,
+      type: 'text',
+      dataset: { fileLabel: file.id },
+      value: file.label
+    })
+  );
+
+  card.appendChild(el('label', { text: 'Open Hint' }));
+  card.appendChild(
+    el('input', {
+      type: 'text',
+      dataset: { fileHint: file.id },
+      value: file.openHint,
+      placeholder: 'How to open/import this file later'
+    })
+  );
+
+  return card;
+};
+
+const buildFilesSection = () => {
+  const fieldErrors = collectFieldErrors();
+  const attachedCount = state.files.length;
+  const totalBytes = state.files.reduce((sum, file) => sum + file.size, 0);
+  const section = el('section', { className: 'card wizard-card', dataset: { filesSection: '' } });
+  section.appendChild(
+    el('div', { className: 'card__header' }, [
+      el('div', {}, [
+        el('h2', { text: 'Step 3: Optional File Attachments' }),
+        el('p', {
+          className: 'helper',
+          text: 'Attach exports or backup files to encrypt inside the same vault package.'
+        })
+      ])
+    ])
+  );
+
+  const toggleRow = el('label', { className: 'files-toggle-row' });
+  toggleRow.appendChild(
+    el('input', {
+      type: 'checkbox',
+      checked: state.fileAttachmentsEnabled,
+      dataset: { filesEnabled: '' }
+    })
+  );
+  toggleRow.appendChild(document.createTextNode(' Encrypt attached files in this vault'));
+  section.appendChild(toggleRow);
+
+  section.appendChild(
+    el('p', {
+      className: 'helper',
+      text: `Max ${MAX_VAULT_FILE_COUNT} files, ${formatBytes(MAX_VAULT_TOTAL_FILE_BYTES)} total.`
+    })
+  );
+
+  if (!state.fileAttachmentsEnabled) {
+    section.appendChild(
+      el('p', {
+        className: 'helper',
+        text: 'Disabled. Continue if this vault should only contain seed and path data.'
+      })
+    );
+    return section;
+  }
+
+  section.appendChild(
+    el('input', {
+      type: 'file',
+      dataset: { filesInput: '' },
+      attrs: { multiple: 'multiple' }
+    })
+  );
+
+  section.appendChild(
+    el('p', {
+      className: 'helper',
+      text: 'Good targets: KeePass databases (.kdbx), 1Password exports (.1pux/.1pif), Proton Pass exports, or other critical files.'
+    })
+  );
+
+  section.appendChild(
+    el('div', {
+      className: 'summary-chip',
+      text: `${attachedCount} file${attachedCount === 1 ? '' : 's'} attached • ${formatBytes(totalBytes)}`
+    })
+  );
+
+  const list = el('div', { className: 'vault-files-list' });
+  if (!state.files.length) {
+    list.appendChild(el('p', { className: 'helper', text: 'No files attached yet.' }));
+  } else {
+    state.files.forEach((file) => {
+      list.appendChild(buildFileCard(file, fieldErrors));
+    });
+  }
+  section.appendChild(list);
+  return section;
+};
+
 const syncSeedFieldErrorUI = (seedId: string) => {
   if (state.currentStep !== 'seeds') return;
   const seed = state.seeds.find((item) => item.id === seedId);
@@ -1034,6 +1317,17 @@ const syncAllSeedFieldErrorUI = () => {
   state.seeds.forEach((seed) => syncSeedFieldErrorUI(seed.id));
 };
 
+const syncFilesFieldErrorUI = () => {
+  if (state.currentStep !== 'files') return;
+  const fieldErrors = collectFieldErrors();
+  state.files.forEach((file) => {
+    const labelInput = document.querySelector<HTMLInputElement>(`[data-file-label="${file.id}"]`);
+    if (labelInput) {
+      labelInput.classList.toggle('field-error', hasFieldError(fieldErrors, 'fileLabel', file.id));
+    }
+  });
+};
+
 const bindSeedFieldListeners = (scope: ParentNode) => {
   scope.querySelectorAll<HTMLButtonElement>('[data-remove-seed]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -1062,6 +1356,53 @@ const bindSeedFieldListeners = (scope: ParentNode) => {
       }
       invalidateShamirPreparation();
       if (seed) syncSeedFieldErrorUI(seed.id);
+    });
+  });
+};
+
+const bindFilesFieldListeners = (scope: ParentNode) => {
+  scope.querySelector<HTMLInputElement>('[data-files-enabled]')?.addEventListener('change', (event) => {
+    state.fileAttachmentsEnabled = (event.target as HTMLInputElement).checked;
+    state.filesValidationArmed = false;
+    invalidateShamirPreparation();
+    render();
+  });
+
+  scope.querySelector<HTMLInputElement>('[data-files-input]')?.addEventListener('change', async (event) => {
+    const input = event.target as HTMLInputElement;
+    const files = Array.from(input.files ?? []);
+    input.value = '';
+    await addSelectedFiles(files);
+  });
+
+  scope.querySelectorAll<HTMLButtonElement>('[data-remove-vault-file]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const fileId = button.dataset.removeVaultFile;
+      if (!fileId) return;
+      state.files = state.files.filter((file) => file.id !== fileId);
+      invalidateShamirPreparation();
+      render();
+    });
+  });
+
+  scope.querySelectorAll<HTMLInputElement>('[data-file-label]').forEach((input) => {
+    input.addEventListener('input', () => {
+      const fileId = input.dataset.fileLabel;
+      const target = state.files.find((file) => file.id === fileId);
+      if (!target) return;
+      target.label = input.value;
+      invalidateShamirPreparation();
+      syncFilesFieldErrorUI();
+    });
+  });
+
+  scope.querySelectorAll<HTMLInputElement>('[data-file-hint]').forEach((input) => {
+    input.addEventListener('input', () => {
+      const fileId = input.dataset.fileHint;
+      const target = state.files.find((file) => file.id === fileId);
+      if (!target) return;
+      target.openHint = input.value;
+      invalidateShamirPreparation();
     });
   });
 };
@@ -1516,7 +1857,7 @@ const buildShamirSharesPanel = (
 
 const prepareShamirShares = () => {
   state.securityValidationArmed = true;
-  const errors = [...validateSeedsSection(), ...validatePathsSection(), ...validateSecuritySection()];
+  const errors = [...validateSeedsSection(), ...validateFilesSection(), ...validatePathsSection(), ...validateSecuritySection()];
   if (errors.length) {
     state.stepError = errors[0];
     render();
@@ -1525,6 +1866,7 @@ const prepareShamirShares = () => {
 
   try {
     const data = buildVaultData();
+    const fileSummary = buildFileBundleSummary(data);
     const { vault, shares } = encryptWithShamir({
       data,
       threshold: state.encryption.threshold,
@@ -1532,7 +1874,7 @@ const prepareShamirShares = () => {
       hint: state.encryption.hint.trim() || undefined
     });
     const vaultHtml = buildVaultHtml(vault);
-    const cipherMd = buildCiphertextMarkdown(vault);
+    const cipherMd = buildCiphertextMarkdown(vault, fileSummary);
     state.preparedShamir = {
       fingerprint: buildShamirFingerprint(data),
       vaultHtml,
@@ -1541,7 +1883,9 @@ const prepareShamirShares = () => {
         id: share.id,
         words: formatShareMnemonic(share),
         hex: formatShareHex(share)
-      }))
+      })),
+      fileCount: fileSummary.fileCount,
+      totalFileBytes: fileSummary.totalFileBytes
     };
     state.stepError = '';
     setStatus('Shamir shares generated. Review them, then continue to Finalize.', 'info');
@@ -1561,7 +1905,7 @@ const buildSecuritySection = () => {
   section.appendChild(
     el('div', { className: 'card__header' }, [
       el('div', {}, [
-        el('h2', { text: 'Step 3: Choose Security Mode' }),
+        el('h2', { text: 'Step 4: Choose Security Mode' }),
         el('p', { className: 'helper', text: 'Pick password encryption or Shamir shares, then set recovery details.' })
       ])
     ])
@@ -1763,7 +2107,7 @@ const buildFinalizeSection = () => {
   section.appendChild(
     el('div', { className: 'card__header' }, [
       el('div', {}, [
-        el('h2', { text: 'Step 4: Finalize Vault' }),
+        el('h2', { text: 'Step 5: Finalize Vault' }),
         el('p', { className: 'helper', text: 'Generate vault artifacts, then explicitly download HTML and ciphertext instructions.' })
       ])
     ])
@@ -1771,6 +2115,16 @@ const buildFinalizeSection = () => {
 
   const summary = el('div', { className: 'summary-grid' });
   summary.appendChild(el('div', { className: 'summary-chip', text: `${state.seeds.length} seed${state.seeds.length === 1 ? '' : 's'}` }));
+  const totalFiles = state.generated ? state.generated.fileCount : getEffectiveFiles().length;
+  const totalFileBytes = state.generated
+    ? state.generated.totalFileBytes
+    : getEffectiveFiles().reduce((sum, file) => sum + file.size, 0);
+  summary.appendChild(
+    el('div', {
+      className: 'summary-chip',
+      text: `${totalFiles} file${totalFiles === 1 ? '' : 's'} (${formatBytes(totalFileBytes)})`
+    })
+  );
   const totalPaths = state.seeds.reduce((sum, seed) => sum + seed.paths.length, 0);
   summary.appendChild(el('div', { className: 'summary-chip', text: `${totalPaths} path${totalPaths === 1 ? '' : 's'}` }));
   summary.appendChild(el('div', { className: 'summary-chip', text: `Mode: ${state.encryption.mode === 'password' ? 'Password' : 'Shamir'}` }));
@@ -1861,6 +2215,7 @@ const buildWizardNavigation = () => {
 
 const buildCurrentStepPanel = () => {
   if (state.currentStep === 'seeds') return buildSeedsSection();
+  if (state.currentStep === 'files') return buildFilesSection();
   if (state.currentStep === 'paths') return buildPathsSection();
   if (state.currentStep === 'security') return buildSecuritySection();
   return buildFinalizeSection();
@@ -1915,6 +2270,7 @@ const render = () => {
     syncAllSeedFieldErrorUI();
   });
   bindSeedFieldListeners(root);
+  bindFilesFieldListeners(root);
 
   root.querySelectorAll<HTMLButtonElement>('[data-add-path-seed]').forEach((button) => {
     button.addEventListener('click', () => {
