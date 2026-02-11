@@ -1596,16 +1596,18 @@ const buildSecuritySection = () => {
     ]);
     section.appendChild(thresholdRow);
     section.appendChild(totalRow);
-    section.appendChild(
+    const shamirActions = el('div', { className: 'security-shamir__actions' });
+    shamirActions.appendChild(
       el('button', {
-        className: 'primary',
+        className: 'primary security-shamir__prepare',
         dataset: { prepareShamir: '' },
         text: shamirReady ? 'Regenerate Shamir Shares' : 'Generate Shamir Shares'
       })
     );
+    section.appendChild(shamirActions);
     section.appendChild(
       el('p', {
-        className: `helper ${shamirReady ? 'ok' : 'error'}`,
+        className: `helper security-shamir__status ${shamirReady ? 'ok' : 'error'}`,
         dataset: { shamirPrepStatus: '' },
         text: shamirReady
           ? 'Shares prepared. You can continue to Finalize.'

@@ -86,7 +86,9 @@ test('password encryption flow', async ({ page, context }, testInfo) => {
   await expect(vaultPage.locator('[data-seeds] .vault-seed')).toHaveCount(1, { timeout: 60000 });
 
   await vaultPage.click('[data-derive]');
-  await expect(vaultPage.locator('.derived-item code')).toHaveCount(1);
+  await expect(vaultPage.locator('.derived-table code')).toHaveCount(1);
+  await expect(vaultPage.locator('[data-derived] th', { hasText: /^Index$/ })).toHaveCount(0);
+  await expect(vaultPage.locator('[data-derived]')).not.toContainText(/Index\s+\d+/i);
 
   const [csvDownload] = await Promise.all([
     vaultPage.waitForEvent('download'),
@@ -160,7 +162,7 @@ test('password encryption flow with multiple seeds', async ({ page, context }, t
   await expect(vaultPage.locator('[data-seeds] .vault-seed')).toHaveCount(2, { timeout: 60000 });
 
   await vaultPage.click('[data-derive]');
-  await expect(vaultPage.locator('.derived-item code')).toHaveCount(2);
+  await expect(vaultPage.locator('.derived-table code')).toHaveCount(2);
 });
 
 test('password encryption flow with one seed and three passphrases', async ({ page, context }, testInfo) => {
@@ -192,7 +194,7 @@ test('password encryption flow with one seed and three passphrases', async ({ pa
   await expect(vaultPage.locator('[data-seeds] .vault-seed')).toHaveCount(1, { timeout: 60000 });
 
   await vaultPage.click('[data-derive]');
-  await expect(vaultPage.locator('.derived-item code')).toHaveCount(3);
+  await expect(vaultPage.locator('.derived-table code')).toHaveCount(3);
 });
 
 test('password encryption flow with one seed, passphrase, and three HD paths', async ({ page, context }, testInfo) => {
@@ -229,7 +231,7 @@ test('password encryption flow with one seed, passphrase, and three HD paths', a
   await expect(vaultPage.locator('[data-seeds] .vault-seed')).toHaveCount(1, { timeout: 60000 });
 
   await vaultPage.click('[data-derive]');
-  await expect(vaultPage.locator('.derived-item code')).toHaveCount(3);
+  await expect(vaultPage.locator('.derived-table code')).toHaveCount(3);
 });
 
 test('password encryption flow with 2 seeds and 2 paths each', async ({ page, context }, testInfo) => {
@@ -285,8 +287,9 @@ test('password encryption flow with 2 seeds and 2 paths each', async ({ page, co
   await expect(vaultPage.locator('[data-seeds] .passphrase [data-reveal]')).toHaveCount(4);
 
   await vaultPage.click('[data-derive]');
-  await expect(vaultPage.locator('.derived-item code')).toHaveCount(4);
-  await expect(vaultPage.locator('[data-derived] .passphrase [data-reveal]')).toHaveCount(4);
+  await expect(vaultPage.locator('[data-derived] .derived-table')).toHaveCount(1);
+  await expect(vaultPage.locator('.derived-table code')).toHaveCount(4);
+  await expect(vaultPage.locator('[data-derived] [data-reveal]')).toHaveCount(4);
 });
 
 test('assigns default seed labels by index', async ({ page }) => {

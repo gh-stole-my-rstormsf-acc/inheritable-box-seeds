@@ -289,8 +289,9 @@ const STYLE = `
   }
   .secret--compact {
     margin-top: 0;
+    padding: 0.42rem 0.56rem;
     font-size: 0.82rem;
-    line-height: 1.35;
+    line-height: 1.25;
   }
   .paths {
     margin-top: var(--space-4);
@@ -323,8 +324,8 @@ const STYLE = `
   .passphrase {
     width: 100%;
     display: grid;
-    gap: 0.42rem;
-    padding: 0.5rem 0.6rem;
+    gap: 0.3rem;
+    padding: 0.36rem 0.48rem;
     border-radius: 0.65rem;
     border: 1px solid rgba(101, 152, 219, 0.35);
     background: rgba(6, 16, 33, 0.56);
@@ -333,12 +334,12 @@ const STYLE = `
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-3);
-    font-size: var(--text-sm);
+    gap: var(--space-2);
+    font-size: var(--text-xs);
   }
   .passphrase__header button {
     margin-top: 0;
-    padding: 0.35rem 0.68rem;
+    padding: 0.28rem 0.56rem;
     font-size: var(--text-xs);
   }
   .passphrase__label {
@@ -346,58 +347,82 @@ const STYLE = `
     color: var(--color-text-muted);
     font-size: var(--text-xs);
   }
-  .derived-group {
-    border: 1px solid var(--color-border-subtle);
-    border-radius: var(--radius-md);
-    padding: var(--space-4);
-    background: linear-gradient(140deg, rgba(20, 43, 73, 0.78), rgba(11, 26, 49, 0.76));
-    margin-bottom: var(--space-4);
-  }
-  .derived-group__header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: var(--space-4);
-    margin-bottom: var(--space-3);
-  }
-  .derived-group__meta {
-    display: grid;
-    gap: 0.28rem;
-  }
-  .derived-group__meta span {
-    color: var(--color-text-muted);
-    word-break: break-all;
-    font-size: var(--text-sm);
-  }
-  .derived-group__passphrase {
-    min-width: 220px;
-    display: grid;
-    gap: 0.35rem;
-  }
-  .derived-group__passphrase > span {
-    color: var(--color-text-muted);
-    font-size: var(--text-sm);
-  }
-  .derived-list {
-    display: grid;
-    gap: var(--space-2);
-  }
-  .derived-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: var(--space-3);
-    padding: 0.58rem 0.72rem;
+  .derived-table-wrap {
+    margin-top: var(--space-2);
     border: 1px solid rgba(101, 149, 210, 0.34);
     border-radius: 0.72rem;
+    overflow-x: auto;
     background: rgba(9, 22, 42, 0.55);
   }
-  .derived-item p {
-    margin: 0;
-    font-size: var(--text-xs);
-    color: var(--color-text-muted);
+  .derived-table {
+    width: 100%;
+    min-width: 56rem;
+    border-collapse: collapse;
   }
-  .derived-item code {
+  .derived-table th,
+  .derived-table td {
+    padding: 0.62rem 0.76rem;
+    border-bottom: 1px solid rgba(101, 149, 210, 0.24);
+    border-right: 1px solid rgba(101, 149, 210, 0.18);
+    text-align: left;
+    vertical-align: top;
+  }
+  .derived-table th:last-child,
+  .derived-table td:last-child {
+    border-right: none;
+  }
+  .derived-table thead th {
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #aec8e8;
+    background: rgba(11, 27, 50, 0.72);
+  }
+  .derived-table tbody tr:nth-child(even) {
+    background: rgba(7, 18, 35, 0.36);
+  }
+  .derived-table tbody tr:last-child td {
+    border-bottom: none;
+  }
+  .derived-table__seed {
+    font-weight: 650;
+    color: #cfe1f8;
+    white-space: nowrap;
+  }
+  .derived-table__path {
+    min-width: 12.5rem;
+    color: var(--color-text-muted);
+    word-break: break-all;
+  }
+  .derived-table__passphrase-label {
+    min-width: 7rem;
+    color: var(--color-text-muted);
+    word-break: break-word;
+  }
+  .derived-table__passphrase {
+    min-width: 12.5rem;
+  }
+  .derived-table__passphrase-cell {
+    display: grid;
+    gap: 0.42rem;
+  }
+  .derived-table__passphrase-cell button {
+    margin-top: 0;
+    justify-self: start;
+    padding: 0.32rem 0.64rem;
+    font-size: var(--text-xs);
+  }
+  .derived-table__passphrase-cell .secret {
+    margin-top: 0;
+  }
+  .derived-table__none {
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+  }
+  .derived-table__address {
+    min-width: 19rem;
+  }
+  .derived-table code {
     font-family: "Courier New", monospace;
     font-size: var(--text-sm);
     color: #dff1ff;
@@ -417,17 +442,11 @@ const STYLE = `
     .meta {
       justify-items: start;
     }
-    .derived-group__header {
-      flex-direction: column;
-      gap: var(--space-3);
+    .derived-table {
+      min-width: 50rem;
     }
-    .derived-group__passphrase {
-      min-width: 0;
-      width: 100%;
-    }
-    .derived-item {
-      flex-direction: column;
-      align-items: flex-start;
+    .derived-table code {
+      white-space: normal;
     }
   }
   @media (max-width: 640px) {
