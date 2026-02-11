@@ -177,17 +177,20 @@ const renderSeedList = (data: VaultData) => {
       const passphraseId = `seed-${seedIndex}-path-${pathIndex}-passphrase`;
       const passphraseLabel = pathConfig.passphraseLabel?.trim();
 
-      const info = el('div', {}, [el('strong', { text: pathConfig.label }), el('p', { text: pathConfig.path })]);
+      const info = el('div', { className: 'path__info' }, [
+        el('strong', { className: 'path__title', text: pathConfig.label }),
+        el('p', { className: 'path__value', text: pathConfig.path })
+      ]);
       const meta = el('div', { className: 'meta' });
 
       if (pathConfig.passphrase) {
         const passphrase = el('div', { className: 'passphrase' });
-        const passHeader = el('div', { className: 'passphrase__header' }, [
-          el('span', { text: 'Passphrase' }),
+        const passTopline = el('div', { className: 'passphrase__topline' }, [
+          el('span', { className: 'passphrase__label-key', text: 'Passphrase Label' }),
+          el('span', { className: 'passphrase__label-value', text: passphraseLabel || '[unlabeled]' }),
           el('button', { dataset: { reveal: passphraseId }, text: 'Reveal' })
         ]);
-        passphrase.appendChild(passHeader);
-        passphrase.appendChild(el('p', { className: 'passphrase__label', text: passphraseLabel || '[unlabeled]' }));
+        passphrase.appendChild(passTopline);
         passphrase.appendChild(
           el('p', {
             className: 'secret secret--compact',
@@ -198,10 +201,10 @@ const renderSeedList = (data: VaultData) => {
         );
         meta.appendChild(passphrase);
       } else {
-        meta.appendChild(el('span', { text: 'Passphrase: [none]' }));
+        meta.appendChild(el('span', { className: 'path__none', text: 'Passphrase: [none]' }));
       }
 
-      meta.appendChild(el('span', { text: `Addresses: ${pathConfig.deriveCount}` }));
+      meta.appendChild(el('span', { className: 'path__count', text: `Addresses: ${pathConfig.deriveCount}` }));
       pathEl.appendChild(info);
       pathEl.appendChild(meta);
       pathsContainer.appendChild(pathEl);
