@@ -3,6 +3,7 @@
 Self-contained, offline, quantum-resistant HTML vault for Ethereum seed phrases with multi-path derivation support.
 
 Live app: [GitHub Pages](https://gh-stole-my-rstormsf-acc.github.io/inheritable-box-seeds/)
+Download for offline usage: [Latest standalone HTML](https://github.com/gh-stole-my-rstormsf-acc/inheritable-box-seeds/releases/latest/download/seed-vault-standalone.html)
 
 ## Security Model
 

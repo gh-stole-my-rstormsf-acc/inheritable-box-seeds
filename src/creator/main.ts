@@ -325,13 +325,6 @@ const setCreatorView = (view: CreatorView, options: { syncHash?: boolean } = {})
   render();
 };
 
-const isStandaloneCreatorDocument = () => {
-  if (typeof document === 'undefined') return false;
-  const hasExternalScript = document.querySelector('script[src]') !== null;
-  const hasExternalStylesheet = document.querySelector('link[rel="stylesheet"][href]') !== null;
-  return !hasExternalScript && !hasExternalStylesheet;
-};
-
 let hashListenerBound = false;
 
 const bindCreatorHashListener = () => {
@@ -1136,11 +1129,6 @@ const handleDownloadCipherMd = () => {
   const filename = `seed-vault-cipher-${md5Hex(state.generated.cipherMd)}.md`;
   downloadFile(state.generated.cipherMd, filename, 'text/markdown');
   setStatus('Ciphertext markdown download started.', 'info');
-};
-
-const handleDownloadCreatorOfflineHtml = () => {
-  const documentHtml = `<!DOCTYPE html>\n${document.documentElement.outerHTML}`;
-  downloadFile(documentHtml, 'seed-vault-creator-offline.html', 'text/html');
 };
 
 const buildWizardStepper = () => {
@@ -2506,29 +2494,16 @@ const buildCreatorFooter = () =>
   typeof window !== 'undefined' && window.location.protocol === 'file:'
     ? null
     : el('footer', { className: 'creator__footer' }, [
-        isStandaloneCreatorDocument()
-          ? el(
-              'a',
-              {
-                className: 'creator__footer-link',
-                dataset: { downloadOfflineCreator: '' },
-                attrs: {
-                  href: '#',
-                  role: 'button'
-                },
-                text: 'Download for offline usage'
-              }
-            )
-          : el('a', {
-              className: 'creator__footer-link',
-              dataset: { releaseOfflineCreator: '' },
-              attrs: {
-                href: GITHUB_RELEASES_STANDALONE_URL,
-                target: '_blank',
-                rel: 'noreferrer noopener'
-              },
-              text: 'Get standalone release'
-            })
+        el('a', {
+          className: 'creator__footer-link',
+          dataset: { downloadOfflineCreator: '' },
+          attrs: {
+            href: GITHUB_RELEASES_STANDALONE_URL,
+            target: '_blank',
+            rel: 'noreferrer noopener'
+          },
+          text: 'Download for offline usage'
+        })
       ]);
 
 const buildApp = () => {
@@ -2722,10 +2697,6 @@ const render = () => {
   root.querySelector<HTMLButtonElement>('[data-generate]')?.addEventListener('click', handleGenerate);
   root.querySelector<HTMLButtonElement>('[data-download-vault-html]')?.addEventListener('click', handleDownloadVaultHtml);
   root.querySelector<HTMLButtonElement>('[data-download-cipher-md]')?.addEventListener('click', handleDownloadCipherMd);
-  root.querySelector<HTMLElement>('[data-download-offline-creator]')?.addEventListener('click', (event) => {
-    event.preventDefault();
-    handleDownloadCreatorOfflineHtml();
-  });
 
   root.querySelectorAll<HTMLInputElement>('input[name="share-display"]').forEach((input) => {
     input.addEventListener('change', () => {

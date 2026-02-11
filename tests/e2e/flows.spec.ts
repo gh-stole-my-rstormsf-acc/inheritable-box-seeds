@@ -714,10 +714,10 @@ test('creator FAQ view toggles from header and renders category accordion', asyn
 
 test('landing footer shows standalone release link in non-standalone build', async ({ page }) => {
   await page.goto('/');
-  await expect(page.locator('[data-download-offline-creator]')).toHaveCount(0);
-  const releaseLink = page.locator('[data-release-offline-creator]');
-  await expect(releaseLink).toBeVisible();
-  await expect(releaseLink).toHaveAttribute(
+  const offlineLink = page.locator('[data-download-offline-creator]');
+  await expect(offlineLink).toBeVisible();
+  await expect(offlineLink).toHaveText(/download for offline usage/i);
+  await expect(offlineLink).toHaveAttribute(
     'href',
     'https://github.com/gh-stole-my-rstormsf-acc/inheritable-box-seeds/releases/latest/download/seed-vault-standalone.html'
   );
