@@ -592,6 +592,13 @@ button:hover:not(:disabled) {
   color: #b8d0ed;
 }
 
+.finalize-downloads {
+  margin-top: var(--space-3);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
 .shares {
   margin-top: var(--space-4);
   display: grid;

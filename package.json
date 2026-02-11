@@ -13,7 +13,8 @@
     "preview": "vite preview",
     "test:unit": "vitest run --passWithNoTests",
     "test:e2e": "playwright test --pass-with-no-tests",
-    "test:e2e:chromium": "playwright test --project=chromium --pass-with-no-tests"
+    "test:e2e:chromium": "playwright test --project=chromium --pass-with-no-tests",
+    "test:node:cipher-roundtrip": "node scripts/verify-cipher-roundtrip.mjs"
   },
   "dependencies": {
     "argon2-browser": "^1.18.0",

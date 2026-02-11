@@ -1,21 +1,33 @@
 import { build } from 'esbuild';
 import { resolve } from 'node:path';
 
-const entry = resolve('src/vault/runtime.ts');
-const outfile = resolve('src/vault/runtime.bundle.js');
-
-await build({
-  entryPoints: [entry],
-  outfile,
-  bundle: true,
-  minify: true,
-  format: 'iife',
-  platform: 'browser',
-  target: ['es2020'],
-  sourcemap: false,
-  loader: {
-    '.wasm': 'dataurl'
+const builds = [
+  {
+    entry: resolve('src/vault/runtime.password.ts'),
+    outfile: resolve('src/vault/runtime.password.bundle.js')
+  },
+  {
+    entry: resolve('src/vault/runtime.shamir.ts'),
+    outfile: resolve('src/vault/runtime.shamir.bundle.js')
   }
-});
+];
 
-console.log(`Vault runtime bundled to ${outfile}`);
+await Promise.all(
+  builds.map(({ entry, outfile }) =>
+    build({
+      entryPoints: [entry],
+      outfile,
+      bundle: true,
+      minify: true,
+      format: 'iife',
+      platform: 'browser',
+      target: ['es2020'],
+      sourcemap: false,
+      loader: {
+        '.wasm': 'dataurl'
+      }
+    }).then(() => {
+      console.log(`Vault runtime bundled to ${outfile}`);
+    })
+  )
+);
