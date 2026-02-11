@@ -25,12 +25,29 @@ const setNumericInputByLocator = async (locator: any, value: string) => {
   }, value);
 };
 
+const goToStep = async (page: any, step: 'seeds' | 'paths' | 'security' | 'finalize') => {
+  await page.click(`[data-step-link="${step}"]`);
+};
+
+const addPathToSeedIndex = async (page: any, seedIndex: number) => {
+  await page.locator('[data-add-path-seed]').nth(seedIndex).click();
+};
+
+const prepareShamirShares = async (page: any) => {
+  const prepareButton = page.locator('[data-prepare-shamir]');
+  await expect(prepareButton).toBeVisible();
+  await prepareButton.click();
+  await expect(page.locator('[data-shamir-prep-status]')).toContainText(/can continue to finalize/i);
+};
+
 const generateVault = async (page: any) => {
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
+  await goToStep(page, 'paths');
   await setNumericInput(page, 'input[data-path-count]', '1');
 };
 
 const fillPasswordFields = async (page: any, password = longPassword) => {
+  await goToStep(page, 'security');
   await page.click('input[data-password]');
   await page.type('input[data-password]', password, { delay: 10 });
   await expect(page.locator('input[data-password]')).toHaveValue(password);
@@ -38,6 +55,7 @@ const fillPasswordFields = async (page: any, password = longPassword) => {
 };
 
 const downloadVault = async (page: any, testInfo: any, filename: string) => {
+  await goToStep(page, 'finalize');
   const [download] = await Promise.all([page.waitForEvent('download'), page.click('[data-generate]')]);
   const vaultPath = testInfo.outputPath(filename);
   await download.saveAs(vaultPath);
@@ -55,11 +73,12 @@ const decryptVault = async (context: any, vaultPath: string, password = longPass
 test('password encryption flow', async ({ page, context }, testInfo) => {
   await page.goto('/');
   await generateVault(page);
+  await expect(page.locator('[data-preview-list] code')).toHaveCount(1);
+  await goToStep(page, 'security');
   await page.selectOption('[data-argon-preset]', 'custom');
   await page.fill('[data-argon-time]', '4');
   await page.fill('[data-argon-memory]', '512');
   await page.fill('[data-argon-parallelism]', '4');
-  await expect(page.locator('[data-preview-list] code')).toHaveCount(1);
   await fillPasswordFields(page);
 
   const vaultPath = await downloadVault(page, testInfo, 'vault-password.html');
@@ -67,7 +86,9 @@ test('password encryption flow', async ({ page, context }, testInfo) => {
   await expect(vaultPage.locator('[data-seeds] .vault-seed')).toHaveCount(1, { timeout: 60000 });
 
   await vaultPage.click('[data-derive]');
-  await expect(vaultPage.locator('.derived-item code')).toHaveCount(1);
+  await expect(vaultPage.locator('.derived-table code')).toHaveCount(1);
+  await expect(vaultPage.locator('[data-derived] th', { hasText: /^Index$/ })).toHaveCount(0);
+  await expect(vaultPage.locator('[data-derived]')).not.toContainText(/Index\s+\d+/i);
 
   const [csvDownload] = await Promise.all([
     vaultPage.waitForEvent('download'),
@@ -79,9 +100,12 @@ test('password encryption flow', async ({ page, context }, testInfo) => {
 test('shamir encryption flow', async ({ page, context }, testInfo) => {
   await page.goto('/');
   await generateVault(page);
+  await goToStep(page, 'security');
   await page.check('input[value="shamir"]');
   await page.fill('input[data-threshold]', '2');
   await page.fill('input[data-total]', '3');
+  await prepareShamirShares(page);
+  await goToStep(page, 'finalize');
 
   const [download] = await Promise.all([
     page.waitForEvent('download'),
@@ -125,6 +149,7 @@ test('password encryption flow with multiple seeds', async ({ page, context }, t
   const seedLabels = page.locator('input[data-seed-label]');
   await seedLabels.nth(0).fill('Seed One');
   await seedLabels.nth(1).fill('Seed Two');
+  await goToStep(page, 'paths');
   const counts = page.locator('input[data-path-count]');
   const totalCounts = await counts.count();
   for (let i = 0; i < totalCounts; i += 1) {
@@ -137,14 +162,16 @@ test('password encryption flow with multiple seeds', async ({ page, context }, t
   await expect(vaultPage.locator('[data-seeds] .vault-seed')).toHaveCount(2, { timeout: 60000 });
 
   await vaultPage.click('[data-derive]');
-  await expect(vaultPage.locator('.derived-item code')).toHaveCount(2);
+  await expect(vaultPage.locator('.derived-table code')).toHaveCount(2);
 });
 
 test('password encryption flow with one seed and three passphrases', async ({ page, context }, testInfo) => {
   await page.goto('/');
   await page.fill('textarea[data-seed-mnemonic]', mnemonicAlt2);
-  await page.click('[data-add-path]');
-  await page.click('[data-add-path]');
+  await goToStep(page, 'paths');
+  await addPathToSeedIndex(page, 0);
+  await addPathToSeedIndex(page, 0);
+  await expect(page.locator('.path__seed-badge').first()).toContainText('Seed: Seed 1');
 
   const passphrases = page.locator('input[data-path-passphrase]');
   await passphrases.nth(0).fill('passphrase-one');
@@ -167,14 +194,15 @@ test('password encryption flow with one seed and three passphrases', async ({ pa
   await expect(vaultPage.locator('[data-seeds] .vault-seed')).toHaveCount(1, { timeout: 60000 });
 
   await vaultPage.click('[data-derive]');
-  await expect(vaultPage.locator('.derived-item code')).toHaveCount(3);
+  await expect(vaultPage.locator('.derived-table code')).toHaveCount(3);
 });
 
 test('password encryption flow with one seed, passphrase, and three HD paths', async ({ page, context }, testInfo) => {
   await page.goto('/');
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
-  await page.click('[data-add-path]');
-  await page.click('[data-add-path]');
+  await goToStep(page, 'paths');
+  await addPathToSeedIndex(page, 0);
+  await addPathToSeedIndex(page, 0);
 
   const paths = page.locator('input[data-path-value]');
   await paths.nth(0).fill("m/44'/60'/0'/0/x");
@@ -203,7 +231,7 @@ test('password encryption flow with one seed, passphrase, and three HD paths', a
   await expect(vaultPage.locator('[data-seeds] .vault-seed')).toHaveCount(1, { timeout: 60000 });
 
   await vaultPage.click('[data-derive]');
-  await expect(vaultPage.locator('.derived-item code')).toHaveCount(3);
+  await expect(vaultPage.locator('.derived-table code')).toHaveCount(3);
 });
 
 test('password encryption flow with 2 seeds and 2 paths each', async ({ page, context }, testInfo) => {
@@ -217,8 +245,11 @@ test('password encryption flow with 2 seeds and 2 paths each', async ({ page, co
   await seedLabels.nth(0).fill('Seed One');
   await seedLabels.nth(1).fill('Seed Two');
 
-  await page.locator('[data-add-path]').nth(0).click();
-  await page.locator('[data-add-path]').nth(1).click();
+  await goToStep(page, 'paths');
+  await addPathToSeedIndex(page, 0);
+  await addPathToSeedIndex(page, 1);
+  await expect(page.locator('.path__seed-badge').filter({ hasText: 'Seed: Seed One' })).toHaveCount(2);
+  await expect(page.locator('.path__seed-badge').filter({ hasText: 'Seed: Seed Two' })).toHaveCount(2);
 
   const pathValues = [
     "m/44'/60'/0'/0/x",
@@ -256,6 +287,158 @@ test('password encryption flow with 2 seeds and 2 paths each', async ({ page, co
   await expect(vaultPage.locator('[data-seeds] .passphrase [data-reveal]')).toHaveCount(4);
 
   await vaultPage.click('[data-derive]');
-  await expect(vaultPage.locator('.derived-item code')).toHaveCount(4);
-  await expect(vaultPage.locator('[data-derived] .passphrase [data-reveal]')).toHaveCount(4);
+  await expect(vaultPage.locator('[data-derived] .derived-table')).toHaveCount(1);
+  await expect(vaultPage.locator('.derived-table code')).toHaveCount(4);
+  await expect(vaultPage.locator('[data-derived] [data-reveal]')).toHaveCount(4);
+});
+
+test('assigns default seed labels by index', async ({ page }) => {
+  await page.goto('/');
+
+  const seedLabels = page.locator('input[data-seed-label]');
+  await expect(seedLabels.nth(0)).toHaveValue('Seed 1');
+
+  await page.click('[data-add-seed]');
+  await expect(seedLabels.nth(1)).toHaveValue('Seed 2');
+});
+
+test('auto-updates path label from preset until manually overridden', async ({ page }) => {
+  await page.goto('/');
+  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
+  await page.click('[data-step-next]');
+
+  const pathLabel = page.locator('input[data-path-label]').first();
+  await expect(pathLabel).toHaveValue('[Seed 1] BIP-44 Standard 1');
+
+  await page.selectOption('select[data-path-preset]', 'ledger-legacy');
+  await expect(pathLabel).toHaveValue('[Seed 1] Ledger Legacy 1');
+
+  await pathLabel.fill('Custom Path Label');
+  await page.selectOption('select[data-path-preset]', 'ledger-live');
+  await expect(pathLabel).toHaveValue('Custom Path Label');
+});
+
+test('add path does not replace paths section and preserves in-progress field values', async ({ page }) => {
+  await page.goto('/');
+  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
+  await page.click('[data-step-next]');
+
+  await page.fill('input[data-path-label]', 'Draft Label');
+  await page.evaluate(() => {
+    (window as Window & { __pathsSectionRef?: Element | null }).__pathsSectionRef =
+      document.querySelector('[data-paths-section]');
+  });
+
+  await page.locator('[data-add-path-seed]').first().click();
+  await expect(page.locator('input[data-path-label]')).toHaveCount(2);
+  const sameSectionAfterOpen = await page.evaluate(
+    () =>
+      (window as Window & { __pathsSectionRef?: Element | null }).__pathsSectionRef ===
+      document.querySelector('[data-paths-section]')
+  );
+  expect(sameSectionAfterOpen).toBe(true);
+  await expect(page.locator('input[data-path-label]').first()).toHaveValue('Draft Label');
+});
+
+test('disables remove button when a seed has only one path', async ({ page }) => {
+  await page.goto('/');
+  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
+  await page.click('[data-step-next]');
+
+  const singlePathRemove = page.locator('[data-remove-path]').first();
+  await expect(singlePathRemove).toBeDisabled();
+  await expect(singlePathRemove).toHaveAttribute('data-tooltip', /only path for this seed/i);
+
+  await addPathToSeedIndex(page, 0);
+  await expect(page.locator('[data-remove-path]')).toHaveCount(2);
+  await expect(page.locator('[data-remove-path]').first()).toBeEnabled();
+  await expect(page.locator('[data-remove-path]').nth(1)).toBeEnabled();
+
+  await page.locator('[data-remove-path]').nth(1).click();
+  await expect(page.locator('[data-remove-path]')).toHaveCount(1);
+  await expect(page.locator('[data-remove-path]').first()).toBeDisabled();
+});
+
+test('shows step error near next and clears it after fixing seed input', async ({ page }) => {
+  await page.goto('/');
+
+  await page.click('[data-step-next]');
+  await expect(page.locator('[data-step-error]')).toContainText(/mnemonic/i);
+  await expect(page.locator('textarea[data-seed-mnemonic]').first()).toHaveClass(/field-error/);
+
+  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
+  await page.click('[data-step-next]');
+  await expect(page.locator('[data-step-error]')).toHaveCount(0);
+  await expect(page.locator('[data-step-link="paths"]')).toHaveClass(/is-active/);
+});
+
+test('shows path step error with red field and clears after fix', async ({ page }) => {
+  await page.goto('/');
+  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
+  await page.click('[data-step-next]');
+
+  await page.fill('input[data-path-label]', '');
+  await page.click('[data-step-next]');
+  await expect(page.locator('[data-step-error]')).toContainText(/Path labels are required/i);
+  await expect(page.locator('input[data-path-label]').first()).toHaveClass(/field-error/);
+
+  await page.fill('input[data-path-label]', 'Main Path');
+  await expect(page.locator('input[data-path-label]').first()).not.toHaveClass(/field-error/);
+  await page.click('[data-step-next]');
+  await expect(page.locator('[data-step-error]')).toHaveCount(0);
+  await expect(page.locator('[data-step-link="security"]')).toHaveClass(/is-active/);
+});
+
+test('does not show password error on security step until next is clicked', async ({ page }) => {
+  await page.goto('/');
+  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
+  await page.click('[data-step-next]');
+  await page.click('[data-step-next]');
+
+  const passwordInput = page.locator('input[data-password]');
+  await expect(passwordInput).not.toHaveClass(/field-error/);
+
+  await page.click('[data-step-next]');
+  await expect(page.locator('[data-step-error]')).toContainText(/Password is required/i);
+  await expect(passwordInput).toHaveClass(/field-error/);
+
+  await passwordInput.fill('ValidPassword123!');
+  await expect(passwordInput).not.toHaveClass(/field-error/);
+});
+
+test('shamir mode shows generate button and renders shares after generate', async ({ page }, testInfo) => {
+  await page.goto('/');
+  await generateVault(page);
+
+  await goToStep(page, 'security');
+  await page.check('input[value="shamir"]');
+  await page.evaluate(() => {
+    (window as Window & { __securitySectionRef?: Element | null }).__securitySectionRef =
+      document.querySelector('.wizard-card');
+  });
+  await page.fill('input[data-threshold]', '2');
+  await page.fill('input[data-total]', '3');
+  const sameSecuritySectionAfterShamirInputs = await page.evaluate(
+    () =>
+      (window as Window & { __securitySectionRef?: Element | null }).__securitySectionRef ===
+      document.querySelector('.wizard-card')
+  );
+  expect(sameSecuritySectionAfterShamirInputs).toBe(true);
+  await expect(page.locator('[data-step-next]')).toBeDisabled();
+  await prepareShamirShares(page);
+  await expect(page.locator('[data-step-next]')).toBeEnabled();
+  await goToStep(page, 'finalize');
+
+  const generateButton = page.locator('[data-generate]');
+  await expect(generateButton).toBeVisible();
+  await expect(generateButton).toHaveText(/Generate Vault/i);
+
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    generateButton.click()
+  ]);
+  await download.saveAs(testInfo.outputPath('vault-shamir-generate-visibility.html'));
+
+  await expect(page.locator('.shares h3')).toHaveText(/Shamir Shares/i);
+  await expect(page.locator('.share')).toHaveCount(3);
 });

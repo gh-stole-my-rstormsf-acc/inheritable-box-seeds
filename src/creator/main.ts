@@ -7,10 +7,12 @@ import { formatShareHex, formatShareMnemonic } from '../shared/crypto/shamir';
 import type { VaultData } from '../shared/types';
 import { deriveKeyArgon2Worker } from './crypto/argon2Worker';
 import { validateArgon2Params, DEFAULT_ARGON2_MIN } from './validation/argon2';
+import { canRemovePath, getOnlyPathTooltip, getTotalPreviewCount, shouldShowLargePreviewWarning } from './pathUi';
 
 interface PathForm {
   id: string;
   label: string;
+  labelCustomized: boolean;
   preset: string;
   path: string;
   passphrase: string;
@@ -49,9 +51,52 @@ interface GeneratedState {
   shares: Array<{ id: number; words: string; hex: string }>;
 }
 
-const createPath = (preset = HD_PATH_PRESETS[0]) => ({
+interface PreparedShamirState {
+  fingerprint: string;
+  vaultHtml: string;
+  shares: Array<{ id: number; words: string; hex: string }>;
+}
+
+type WizardStepId = 'seeds' | 'paths' | 'security' | 'finalize';
+
+interface WizardStep {
+  id: WizardStepId;
+  title: string;
+  subtitle: string;
+}
+
+const WIZARD_STEPS: WizardStep[] = [
+  {
+    id: 'seeds',
+    title: 'Seeds',
+    subtitle: 'Seed phrases and labels'
+  },
+  {
+    id: 'paths',
+    title: 'Paths',
+    subtitle: 'Derivation paths and passphrases'
+  },
+  {
+    id: 'security',
+    title: 'Security',
+    subtitle: 'Encryption and recovery mode'
+  },
+  {
+    id: 'finalize',
+    title: 'Finalize',
+    subtitle: 'Generate and download vault'
+  }
+];
+
+const buildSeedDefaultLabel = (seedIndex: number) => `Seed ${seedIndex + 1}`;
+
+const buildAutoPathLabel = (seedDisplayName: string, presetLabel: string, pathNumber: number) =>
+  `[${seedDisplayName}] ${presetLabel} ${pathNumber}`;
+
+const createPath = (preset = HD_PATH_PRESETS[0], label = preset.label, labelCustomized = false) => ({
   id: crypto.randomUUID(),
-  label: preset.label,
+  label,
+  labelCustomized,
   preset: preset.id,
   path: preset.path,
   passphrase: '',
@@ -63,12 +108,17 @@ const createPath = (preset = HD_PATH_PRESETS[0]) => ({
   previewRequestId: 0
 });
 
-const createSeed = (): SeedForm => ({
+const createSeed = (seedIndex: number): SeedForm => {
+  const seedLabel = buildSeedDefaultLabel(seedIndex);
+  const firstPreset = HD_PATH_PRESETS[0];
+  const initialPath = createPath(firstPreset, buildAutoPathLabel(seedLabel, firstPreset.label, 1), false);
+  return {
   id: crypto.randomUUID(),
-  label: 'Primary Seed',
+  label: seedLabel,
   mnemonic: '',
-  paths: [createPath()]
-});
+  paths: [initialPath]
+  };
+};
 
 const FAST_CRYPTO_FLAG = import.meta.env.VITE_FAST_CRYPTO === 'true';
 if (FAST_CRYPTO_FLAG && import.meta.env.PROD) {
@@ -76,9 +126,10 @@ if (FAST_CRYPTO_FLAG && import.meta.env.PROD) {
 }
 const FAST_CRYPTO = FAST_CRYPTO_FLAG && !import.meta.env.PROD;
 const FAST_PARAMS = { timeCost: 2, memoryCostMB: 1, parallelism: 1 };
+const DEFAULT_STATUS_MESSAGE = 'Complete each step to generate your vault.';
 
 const state = {
-  seeds: [createSeed()],
+  seeds: [createSeed(0)],
   encryption: {
     mode: 'password',
     password: '',
@@ -93,11 +144,17 @@ const state = {
     threshold: 2,
     totalShares: 3
   } as EncryptionState,
-  status: '',
+  status: DEFAULT_STATUS_MESSAGE,
   statusTone: 'info' as 'info' | 'error',
   generated: undefined as GeneratedState | undefined,
+  preparedShamir: undefined as PreparedShamirState | undefined,
   isGenerating: false,
-  progress: 0
+  progress: 0,
+  stepError: '',
+  seedValidationArmed: false,
+  pathValidationArmed: false,
+  securityValidationArmed: false,
+  currentStep: 'seeds' as WizardStepId
 };
 
 type Child = Node | string | null | undefined;
@@ -194,6 +251,52 @@ const setStatus = (message: string, tone: 'info' | 'error' = 'info') => {
   state.status = message;
   state.statusTone = tone;
   render();
+};
+
+const invalidateShamirPreparation = () => {
+  state.preparedShamir = undefined;
+};
+
+const getSeedDisplayName = (seed: SeedForm) => {
+  const label = seed.label.trim();
+  if (label) return label;
+  const index = state.seeds.findIndex((candidate) => candidate.id === seed.id);
+  return `Seed ${index >= 0 ? index + 1 : 1}`;
+};
+
+const getPathNumberForSeed = (seed: SeedForm, pathId: string) => {
+  const pathIndex = seed.paths.findIndex((path) => path.id === pathId);
+  return pathIndex >= 0 ? pathIndex + 1 : 1;
+};
+
+const buildCurrentAutoPathLabel = (seed: SeedForm, path: PathForm, presetId = path.preset) => {
+  const preset = HD_PATH_PRESETS.find((candidate) => candidate.id === presetId);
+  if (!preset) return '';
+  const seedName = getSeedDisplayName(seed);
+  const pathNumber = getPathNumberForSeed(seed, path.id);
+  return buildAutoPathLabel(seedName, preset.label, pathNumber);
+};
+
+const addPathToSeed = (seedId: string) => {
+  const targetSeed = state.seeds.find((seed) => seed.id === seedId);
+  if (!targetSeed) return;
+
+  invalidateShamirPreparation();
+  const preset = HD_PATH_PRESETS[0];
+  const path = createPath(preset);
+  const seedName = getSeedDisplayName(targetSeed);
+  const nextNumber = targetSeed.paths.length + 1;
+  path.label = buildAutoPathLabel(seedName, preset.label, nextNumber);
+  path.labelCustomized = false;
+  targetSeed.paths.push(path);
+  const warningPatched = syncPathsPreviewWarningUI();
+  const pathPatched = appendPathCard(targetSeed, path);
+
+  if (!warningPatched || !pathPatched) {
+    render();
+  }
+
+  schedulePreview(targetSeed, path);
 };
 
 const passwordStrength = (password: string) => {
@@ -296,24 +399,129 @@ const md5Hex = (input: string) => {
   return `${wordToHex(a)}${wordToHex(b)}${wordToHex(c)}${wordToHex(d)}`;
 };
 
-const validateForm = () => {
+interface FieldErrorState {
+  seedLabel: Set<string>;
+  seedMnemonic: Set<string>;
+  pathLabel: Set<string>;
+  pathValue: Set<string>;
+  pathPassphraseLabel: Set<string>;
+  pathCount: Set<string>;
+  password: boolean;
+  confirm: boolean;
+  argonTime: boolean;
+  argonMemory: boolean;
+  argonParallelism: boolean;
+  threshold: boolean;
+  total: boolean;
+}
+
+const getPathFieldKey = (seedId: string, pathId: string) => `${seedId}:${pathId}`;
+
+const emptyFieldErrors = (): FieldErrorState => ({
+  seedLabel: new Set<string>(),
+  seedMnemonic: new Set<string>(),
+  pathLabel: new Set<string>(),
+  pathValue: new Set<string>(),
+  pathPassphraseLabel: new Set<string>(),
+  pathCount: new Set<string>(),
+  password: false,
+  confirm: false,
+  argonTime: false,
+  argonMemory: false,
+  argonParallelism: false,
+  threshold: false,
+  total: false
+});
+
+const collectFieldErrors = (): FieldErrorState => {
+  const fieldErrors = emptyFieldErrors();
+  const labelCounts = new Map<string, number>();
+  const shouldValidatePaths = state.pathValidationArmed;
+  const shouldValidateSecurity = state.securityValidationArmed;
+
+  state.seeds.forEach((seed) => {
+    const label = seed.label.trim();
+    if (!label) {
+      fieldErrors.seedLabel.add(seed.id);
+    } else {
+      labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
+    }
+
+    if (!validateBip39Mnemonic(seed.mnemonic).valid) {
+      fieldErrors.seedMnemonic.add(seed.id);
+    }
+
+    if (shouldValidatePaths) {
+      seed.paths.forEach((path) => {
+        const key = getPathFieldKey(seed.id, path.id);
+        if (!path.label.trim()) fieldErrors.pathLabel.add(key);
+        if (!validateHdPathTemplate(path.path).valid) fieldErrors.pathValue.add(key);
+        if (path.passphrase.trim() && !path.passphraseLabel.trim()) fieldErrors.pathPassphraseLabel.add(key);
+        if (path.deriveCount < 1 || path.deriveCount > 100) fieldErrors.pathCount.add(key);
+      });
+    }
+  });
+
+  state.seeds.forEach((seed) => {
+    const label = seed.label.trim();
+    if (label && (labelCounts.get(label) ?? 0) > 1) {
+      fieldErrors.seedLabel.add(seed.id);
+    }
+  });
+
+  if (shouldValidateSecurity) {
+    if (state.encryption.mode === 'password') {
+      if (!state.encryption.password) fieldErrors.password = true;
+      if (state.encryption.password !== state.encryption.confirm) fieldErrors.confirm = true;
+      if (state.encryption.argonPresetId === 'custom' && !validateArgon2Params(state.encryption.argonCustom).valid) {
+        fieldErrors.argonTime = true;
+        fieldErrors.argonMemory = true;
+        fieldErrors.argonParallelism = true;
+      }
+    } else if (state.encryption.threshold < 2 || state.encryption.totalShares < state.encryption.threshold) {
+      fieldErrors.threshold = true;
+      fieldErrors.total = true;
+    }
+  }
+
+  return fieldErrors;
+};
+
+const hasFieldError = (fieldErrors: FieldErrorState, group: keyof FieldErrorState, key?: string) => {
+  const target = fieldErrors[group];
+  if (target instanceof Set) {
+    return key ? target.has(key) : false;
+  }
+  return Boolean(target);
+};
+
+const validateSeedsSection = () => {
   const errors: string[] = [];
   const labels = new Set<string>();
 
-  state.seeds.forEach((seed) => {
-    if (!seed.label.trim()) {
+  state.seeds.forEach((seed, index) => {
+    const label = seed.label.trim();
+    if (!label) {
       errors.push('Seed labels are required.');
     }
-    if (labels.has(seed.label.trim())) {
+    if (label && labels.has(label)) {
       errors.push('Seed labels must be unique.');
     }
-    labels.add(seed.label.trim());
+    labels.add(label);
 
     const mnemonicResult = validateBip39Mnemonic(seed.mnemonic);
     if (!mnemonicResult.valid) {
-      errors.push(`Seed "${seed.label}" mnemonic: ${mnemonicResult.error}`);
+      errors.push(`Seed ${index + 1} mnemonic: ${mnemonicResult.error}`);
     }
+  });
 
+  return errors;
+};
+
+const validatePathsSection = () => {
+  const errors: string[] = [];
+
+  state.seeds.forEach((seed) => {
     seed.paths.forEach((path) => {
       if (!path.label.trim()) {
         errors.push('Path labels are required.');
@@ -331,6 +539,12 @@ const validateForm = () => {
     });
   });
 
+  return errors;
+};
+
+const validateSecuritySection = () => {
+  const errors: string[] = [];
+
   if (state.encryption.mode === 'password') {
     if (!state.encryption.password) {
       errors.push('Password is required.');
@@ -344,13 +558,102 @@ const validateForm = () => {
         errors.push(validation.error ?? 'Invalid Argon2 parameters.');
       }
     }
-  } else {
-    if (state.encryption.threshold < 2 || state.encryption.totalShares < state.encryption.threshold) {
-      errors.push('Shamir threshold must be at least 2 and <= total shares.');
-    }
+  } else if (state.encryption.threshold < 2 || state.encryption.totalShares < state.encryption.threshold) {
+    errors.push('Shamir threshold must be at least 2 and <= total shares.');
   }
 
   return errors;
+};
+
+const validateForm = () => [...validateSeedsSection(), ...validatePathsSection(), ...validateSecuritySection()];
+
+const validationErrorForStep = (stepId: WizardStepId) => {
+  if (stepId === 'seeds') return validateSeedsSection()[0];
+  if (stepId === 'paths') return validatePathsSection()[0];
+  if (stepId === 'security') return validateSecuritySection()[0];
+  return undefined;
+};
+
+const getStepIndex = (stepId: WizardStepId) => WIZARD_STEPS.findIndex((step) => step.id === stepId);
+
+const isShamirFinalizeBlocked = () =>
+  state.currentStep === 'security' &&
+  state.encryption.mode === 'shamir' &&
+  !hasPreparedShamirForCurrentState();
+
+const goToStep = (target: WizardStepId) => {
+  const currentIndex = getStepIndex(state.currentStep);
+  const targetIndex = getStepIndex(target);
+  if (targetIndex <= currentIndex) {
+    state.currentStep = target;
+    state.stepError = '';
+    render();
+    return;
+  }
+
+  for (let index = currentIndex; index < targetIndex; index += 1) {
+    const step = WIZARD_STEPS[index];
+    if (step.id === 'seeds') {
+      state.seedValidationArmed = true;
+    }
+    if (step.id === 'paths') {
+      state.pathValidationArmed = true;
+    }
+    if (step.id === 'security') {
+      state.securityValidationArmed = true;
+      if (state.encryption.mode === 'shamir' && !hasPreparedShamirForCurrentState()) {
+        state.stepError = 'Generate and review Shamir shares before continuing to Finalize.';
+        render();
+        return;
+      }
+    }
+    const error = validationErrorForStep(step.id);
+    if (error) {
+      state.stepError = error;
+      render();
+      return;
+    }
+  }
+
+  state.currentStep = target;
+  state.stepError = '';
+  render();
+};
+
+const goToNextStep = () => {
+  const currentIndex = getStepIndex(state.currentStep);
+  if (currentIndex === WIZARD_STEPS.length - 1) return;
+  if (state.currentStep === 'seeds') {
+    state.seedValidationArmed = true;
+  }
+  if (state.currentStep === 'paths') {
+    state.pathValidationArmed = true;
+  }
+  if (state.currentStep === 'security') {
+    state.securityValidationArmed = true;
+  }
+  if (isShamirFinalizeBlocked()) {
+    state.stepError = 'Generate and review Shamir shares before continuing to Finalize.';
+    render();
+    return;
+  }
+  const error = validationErrorForStep(state.currentStep);
+  if (error) {
+    state.stepError = error;
+    render();
+    return;
+  }
+  state.currentStep = WIZARD_STEPS[currentIndex + 1].id;
+  state.stepError = '';
+  render();
+};
+
+const goToPreviousStep = () => {
+  const currentIndex = getStepIndex(state.currentStep);
+  if (currentIndex <= 0) return;
+  state.currentStep = WIZARD_STEPS[currentIndex - 1].id;
+  state.stepError = '';
+  render();
 };
 
 const buildVaultData = (): VaultData => ({
@@ -367,7 +670,22 @@ const buildVaultData = (): VaultData => ({
   }))
 });
 
+const buildShamirFingerprint = (data: VaultData) =>
+  JSON.stringify({
+    data,
+    threshold: state.encryption.threshold,
+    totalShares: state.encryption.totalShares,
+    hint: state.encryption.hint.trim() || ''
+  });
+
+const hasPreparedShamirForCurrentState = () => {
+  if (state.encryption.mode !== 'shamir' || !state.preparedShamir) return false;
+  const data = buildVaultData();
+  return state.preparedShamir.fingerprint === buildShamirFingerprint(data);
+};
+
 const clearSensitiveState = () => {
+  invalidateShamirPreparation();
   state.seeds = state.seeds.map((seed) => ({
     ...seed,
     mnemonic: '',
@@ -539,22 +857,15 @@ const handleGenerate = async () => {
       };
       setStatus('Vault generated and downloaded. Record your password.', 'info');
     } else {
-      const { vault, shares } = encryptWithShamir({
-        data,
-        threshold: state.encryption.threshold,
-        totalShares: state.encryption.totalShares,
-        hint: state.encryption.hint.trim() || undefined
-      });
-      const html = buildVaultHtml(vault);
-      const filename = `seed-vault-${md5Hex(html)}.html`;
-      downloadFile(html, filename);
+      const prepared = hasPreparedShamirForCurrentState() ? state.preparedShamir : undefined;
+      if (!prepared) {
+        throw new Error('Generate and review Shamir shares in Step 3 before finalizing.');
+      }
+      const filename = `seed-vault-${md5Hex(prepared.vaultHtml)}.html`;
+      downloadFile(prepared.vaultHtml, filename);
       state.generated = {
-        vaultHtml: html,
-        shares: shares.map((share) => ({
-          id: share.id,
-          words: formatShareMnemonic(share),
-          hex: formatShareHex(share)
-        }))
+        vaultHtml: prepared.vaultHtml,
+        shares: prepared.shares
       };
       setStatus('Vault generated and downloaded. Record your shares.', 'info');
     }
@@ -568,181 +879,578 @@ const handleGenerate = async () => {
   }
 };
 
+const buildWizardStepper = () => {
+  const currentIndex = getStepIndex(state.currentStep);
+  const nav = el('nav', { className: 'wizard-steps', attrs: { 'aria-label': 'Vault setup steps' } });
+
+  WIZARD_STEPS.forEach((step, index) => {
+    const item = el('button', {
+      className: `wizard-step ${index === currentIndex ? 'is-active' : ''} ${index < currentIndex ? 'is-complete' : ''}`,
+      dataset: { stepLink: step.id },
+      attrs: { type: 'button' }
+    });
+    item.appendChild(el('span', { className: 'wizard-step__dot', text: String(index + 1) }));
+    item.appendChild(
+      el('span', { className: 'wizard-step__text' }, [
+        el('strong', { text: step.title }),
+        el('span', { text: step.subtitle })
+      ])
+    );
+    nav.appendChild(item);
+  });
+
+  return nav;
+};
+
 const buildSeedsSection = () => {
-  const totalPreviewCount = state.seeds.reduce(
-    (sum, seed) => sum + seed.paths.reduce((pathSum, path) => pathSum + path.deriveCount, 0),
-    0
+  const fieldErrors = collectFieldErrors();
+  const section = el('section', { className: 'card wizard-card' });
+  section.appendChild(
+    el('div', { className: 'card__header' }, [
+      el('div', {}, [el('h2', { text: 'Step 1: Add Seed Phrases' }), el('p', { className: 'helper', text: 'Add one or more mnemonics first. You will configure paths in the next step.' })]),
+      el('button', { className: 'action-add', dataset: { addSeed: '' }, text: 'Add Seed' })
+    ])
   );
-  const showPreviewWarning = totalPreviewCount > 50;
 
-  const section = el('section', { className: 'card' });
-  const header = el('div', { className: 'card__header' }, [
-    el('h2', { text: 'Seeds' }),
-    el('button', { dataset: { addSeed: '' }, text: 'Add Seed' })
-  ]);
   const body = el('div', { className: 'card__body' });
-  if (showPreviewWarning) {
-    body.appendChild(el('p', { className: 'helper error', text: 'Large preview counts may take time.' }));
-  }
-
   state.seeds.forEach((seed, seedIndex) => {
     const seedEl = el('div', { className: 'seed' });
-    const seedHeader = el('div', { className: 'seed__header' }, [
-      el('h3', { text: `Seed ${seedIndex + 1}` }),
-      el('button', { dataset: { removeSeed: seed.id }, text: 'Remove' })
-    ]);
-    seedEl.appendChild(seedHeader);
+    seedEl.appendChild(
+      el('div', { className: 'seed__header' }, [
+        el('h3', { text: `Seed ${seedIndex + 1}` }),
+        el('button', { dataset: { removeSeed: seed.id }, text: 'Remove' })
+      ])
+    );
 
     seedEl.appendChild(el('label', { text: 'Label' }));
     seedEl.appendChild(
       el('input', {
+        className: hasFieldError(fieldErrors, 'seedLabel', seed.id) ? 'field-error' : undefined,
         type: 'text',
         dataset: { seedLabel: seed.id },
         value: seed.label
       })
     );
 
-    seedEl.appendChild(el('label', { text: 'Mnemonic' }));
+    seedEl.appendChild(el('label', { text: 'Mnemonic (BIP-39)' }));
+    const mnemonicStatus = validateBip39Mnemonic(seed.mnemonic);
+    const showMnemonicValidation = state.seedValidationArmed || seed.mnemonic.trim().length > 0;
     seedEl.appendChild(
       el('textarea', {
+        className: showMnemonicValidation && !mnemonicStatus.valid ? 'field-error' : undefined,
         dataset: { seedMnemonic: seed.id },
-        placeholder: '12, 18, or 24 words',
+        placeholder: '12, 18, or 24 lowercase words',
         value: seed.mnemonic
       })
     );
 
-    const mnemonicStatus = validateBip39Mnemonic(seed.mnemonic);
     seedEl.appendChild(
       el('p', {
-        className: `helper ${mnemonicStatus.valid ? 'ok' : 'error'}`,
-        text: mnemonicStatus.valid ? `Valid (${mnemonicStatus.wordCount} words)` : mnemonicStatus.error ?? ''
+        className: `helper ${showMnemonicValidation ? (mnemonicStatus.valid ? 'ok' : 'error') : ''}`,
+        text: !showMnemonicValidation
+          ? 'Enter 12, 18, or 24 words.'
+          : mnemonicStatus.valid
+            ? `Checksum valid (${mnemonicStatus.wordCount} words)`
+            : mnemonicStatus.error ?? ''
       })
     );
+    seedEl.appendChild(
+      el('p', {
+        className: 'helper',
+        text: `${seed.paths.length} path${seed.paths.length === 1 ? '' : 's'} configured`
+      })
+    );
+    body.appendChild(seedEl);
+  });
+  section.appendChild(body);
+  return section;
+};
 
-    const pathsContainer = el('div', { className: 'paths' });
-    pathsContainer.appendChild(
-      el('div', { className: 'paths__header' }, [
-        el('h4', { text: 'HD Paths' }),
-        el('button', { dataset: { addPath: seed.id }, text: 'Add Path' })
+const setRemovePathButtonState = (button: HTMLButtonElement, pathCountForSeed: number) => {
+  const removable = canRemovePath(pathCountForSeed);
+  button.disabled = !removable;
+  if (removable) {
+    delete button.dataset.tooltip;
+    button.removeAttribute('aria-label');
+  } else {
+    const tooltip = getOnlyPathTooltip(pathCountForSeed);
+    button.dataset.tooltip = tooltip;
+    button.setAttribute('aria-label', tooltip);
+  }
+};
+
+const buildPathsPreviewWarning = () =>
+  el('p', {
+    className: 'helper error',
+    text: 'Large preview counts may take time to compute.'
+  });
+
+const buildPathCard = (seed: SeedForm, path: PathForm, fieldErrors: FieldErrorState) => {
+  const seedName = getSeedDisplayName(seed);
+  const pathStatus = validateHdPathTemplate(path.path);
+  const pathKey = getPathFieldKey(seed.id, path.id);
+  const pathEl = el('div', { className: 'path' });
+  const removeButton = el<HTMLButtonElement>('button', { dataset: { removePath: `${seed.id}:${path.id}` }, text: 'Remove' });
+  setRemovePathButtonState(removeButton, seed.paths.length);
+
+  pathEl.appendChild(
+    el('div', { className: 'path__header' }, [
+      el('strong', { text: path.label || 'Path' }),
+      removeButton
+    ])
+  );
+  pathEl.appendChild(
+    el('p', {
+      className: 'path__seed-badge',
+      dataset: { pathSeedBadge: `${seed.id}:${path.id}` },
+      text: `Seed: ${seedName}`
+    })
+  );
+
+  pathEl.appendChild(el('label', { text: 'Path Label' }));
+  pathEl.appendChild(
+    el('input', {
+      className: hasFieldError(fieldErrors, 'pathLabel', pathKey) ? 'field-error' : undefined,
+      type: 'text',
+      dataset: { pathLabel: `${seed.id}:${path.id}` },
+      value: path.label
+    })
+  );
+
+  pathEl.appendChild(el('label', { text: 'Preset' }));
+  const select = el<HTMLSelectElement>('select', { dataset: { pathPreset: `${seed.id}:${path.id}` } });
+  HD_PATH_PRESETS.forEach((preset) => {
+    const option = el<HTMLOptionElement>('option', {
+      attrs: { value: preset.id },
+      text: preset.label
+    });
+    if (preset.id === path.preset) option.selected = true;
+    select.appendChild(option);
+  });
+  const customOption = el<HTMLOptionElement>('option', {
+    attrs: { value: 'custom' },
+    text: 'Custom'
+  });
+  if (path.preset === 'custom') customOption.selected = true;
+  select.appendChild(customOption);
+  pathEl.appendChild(select);
+
+  pathEl.appendChild(el('label', { text: 'Derivation Path' }));
+  pathEl.appendChild(
+    el('input', {
+      className: hasFieldError(fieldErrors, 'pathValue', pathKey) ? 'field-error' : undefined,
+      type: 'text',
+      dataset: { pathValue: `${seed.id}:${path.id}` },
+      value: path.path
+    })
+  );
+  pathEl.appendChild(
+    el('p', {
+      className: `helper ${pathStatus.valid ? 'ok' : 'error'}`,
+      text: pathStatus.valid ? 'Path valid' : pathStatus.error ?? ''
+    })
+  );
+
+  pathEl.appendChild(el('label', { text: 'BIP-39 Passphrase (optional)' }));
+  pathEl.appendChild(
+    el('input', {
+      type: 'text',
+      dataset: { pathPassphrase: `${seed.id}:${path.id}` },
+      value: path.passphrase
+    })
+  );
+
+  pathEl.appendChild(el('label', { text: 'Passphrase Label' }));
+  pathEl.appendChild(
+    el('input', {
+      className: hasFieldError(fieldErrors, 'pathPassphraseLabel', pathKey) ? 'field-error' : undefined,
+      type: 'text',
+      dataset: { pathPassphraseLabel: `${seed.id}:${path.id}` },
+      value: path.passphraseLabel,
+      placeholder: 'Required if passphrase is set'
+    })
+  );
+
+  pathEl.appendChild(el('label', { text: 'Address Count' }));
+  pathEl.appendChild(
+    el('input', {
+      className: hasFieldError(fieldErrors, 'pathCount', pathKey) ? 'field-error' : undefined,
+      type: 'number',
+      min: '1',
+      max: '100',
+      dataset: { pathCount: `${seed.id}:${path.id}` },
+      value: String(path.deriveCount)
+    })
+  );
+
+  const preview = el('div', { className: 'preview', dataset: { preview: `${seed.id}:${path.id}` } });
+  preview.appendChild(
+    el('p', {
+      className: `helper ${path.previewStatus === 'error' ? 'error' : ''}`,
+      dataset: { previewStatus: '' },
+      text: path.previewMessage
+    })
+  );
+  const previewList = el('div', { className: 'preview__list', dataset: { previewList: '' } });
+  const previewTable = renderPreviewTable(path.previewAddresses);
+  if (previewTable) previewList.appendChild(previewTable);
+  preview.appendChild(previewList);
+  pathEl.appendChild(preview);
+
+  return pathEl;
+};
+
+const buildPathsSection = () => {
+  const totalPreviewCount = getTotalPreviewCount(state.seeds);
+
+  const fieldErrors = collectFieldErrors();
+
+  const section = el('section', { className: 'card wizard-card', dataset: { pathsSection: '' } });
+  section.appendChild(
+    el('div', { className: 'card__header' }, [
+      el('div', {}, [
+        el('h2', { text: 'Step 2: Configure HD Paths' }),
+        el('p', {
+          className: 'helper',
+          text: 'Set derivation presets, optional passphrases, and address counts for each seed.'
+        })
+      ])
+    ])
+  );
+
+  const previewWarningHost = el('div', { dataset: { pathsPreviewWarningHost: '' } });
+  if (shouldShowLargePreviewWarning(totalPreviewCount)) previewWarningHost.appendChild(buildPathsPreviewWarning());
+  section.appendChild(previewWarningHost);
+
+  const body = el('div', { className: 'card__body', dataset: { pathsBody: '' } });
+
+  state.seeds.forEach((seed, seedIndex) => {
+    const seedName = getSeedDisplayName(seed);
+    const seedEl = el('div', { className: 'seed seed--paths', dataset: { seedPaths: seed.id } });
+    seedEl.appendChild(
+      el('div', { className: 'seed__header' }, [
+        el('h3', { text: `Seed ${seedIndex + 1}: ${seedName}` }),
+        el('button', {
+          className: 'action-add',
+          dataset: { addPathSeed: seed.id },
+          text: 'Add Path'
+        })
       ])
     );
 
+    const pathsContainer = el('div', { className: 'paths', dataset: { seedPathsContainer: seed.id } });
     seed.paths.forEach((path) => {
-      const pathStatus = validateHdPathTemplate(path.path);
-      const pathEl = el('div', { className: 'path' });
-      pathEl.appendChild(
-        el('div', { className: 'path__header' }, [
-          el('strong', { text: path.label || 'Path' }),
-          el('button', { dataset: { removePath: `${seed.id}:${path.id}` }, text: 'Remove' })
-        ])
-      );
-
-      pathEl.appendChild(el('label', { text: 'Label' }));
-      pathEl.appendChild(
-        el('input', {
-          type: 'text',
-          dataset: { pathLabel: `${seed.id}:${path.id}` },
-          value: path.label
-        })
-      );
-
-      pathEl.appendChild(el('label', { text: 'Preset' }));
-      const select = el<HTMLSelectElement>('select', { dataset: { pathPreset: `${seed.id}:${path.id}` } });
-      HD_PATH_PRESETS.forEach((preset) => {
-        const option = el<HTMLOptionElement>('option', {
-          attrs: { value: preset.id },
-          text: preset.label
-        });
-        if (preset.id === path.preset) option.selected = true;
-        select.appendChild(option);
-      });
-      const customOption = el<HTMLOptionElement>('option', {
-        attrs: { value: 'custom' },
-        text: 'Custom'
-      });
-      if (path.preset === 'custom') customOption.selected = true;
-      select.appendChild(customOption);
-      pathEl.appendChild(select);
-
-      pathEl.appendChild(el('label', { text: 'Path' }));
-      pathEl.appendChild(
-        el('input', {
-          type: 'text',
-          dataset: { pathValue: `${seed.id}:${path.id}` },
-          value: path.path
-        })
-      );
-      pathEl.appendChild(
-        el('p', {
-          className: `helper ${pathStatus.valid ? 'ok' : 'error'}`,
-          text: pathStatus.valid ? 'Path valid' : pathStatus.error ?? ''
-        })
-      );
-
-      pathEl.appendChild(el('label', { text: 'Passphrase (optional)' }));
-      pathEl.appendChild(
-        el('input', {
-          type: 'text',
-          dataset: { pathPassphrase: `${seed.id}:${path.id}` },
-          value: path.passphrase
-        })
-      );
-
-      pathEl.appendChild(el('label', { text: 'Passphrase Label' }));
-      pathEl.appendChild(
-        el('input', {
-          type: 'text',
-          dataset: { pathPassphraseLabel: `${seed.id}:${path.id}` },
-          value: path.passphraseLabel,
-          placeholder: 'Required if passphrase is set'
-        })
-      );
-
-      pathEl.appendChild(el('label', { text: 'Address Count' }));
-      pathEl.appendChild(
-        el('input', {
-          type: 'number',
-          min: '1',
-          max: '100',
-          dataset: { pathCount: `${seed.id}:${path.id}` },
-          value: String(path.deriveCount)
-        })
-      );
-
-      const preview = el('div', { className: 'preview', dataset: { preview: `${seed.id}:${path.id}` } });
-      preview.appendChild(
-        el('p', {
-          className: `helper ${path.previewStatus === 'error' ? 'error' : ''}`,
-          dataset: { previewStatus: '' },
-          text: path.previewMessage
-        })
-      );
-      const previewList = el('div', { className: 'preview__list', dataset: { previewList: '' } });
-      const previewTable = renderPreviewTable(path.previewAddresses);
-      if (previewTable) previewList.appendChild(previewTable);
-      preview.appendChild(previewList);
-
-      pathEl.appendChild(preview);
-      pathsContainer.appendChild(pathEl);
+      pathsContainer.appendChild(buildPathCard(seed, path, fieldErrors));
     });
 
     seedEl.appendChild(pathsContainer);
     body.appendChild(seedEl);
   });
 
-  section.appendChild(header);
   section.appendChild(body);
   return section;
 };
 
-const buildEncryptionSection = () => {
+const syncRemovePathButtonsForSeed = (seed: SeedForm) => {
+  seed.paths.forEach((path) => {
+    const button = document.querySelector<HTMLButtonElement>(`[data-remove-path="${seed.id}:${path.id}"]`);
+    if (!button) return;
+    setRemovePathButtonState(button, seed.paths.length);
+  });
+};
+
+const syncPathFieldErrorUI = (seedId: string, pathId: string) => {
+  if (state.currentStep !== 'paths') return;
+  const key = getPathFieldKey(seedId, pathId);
+  const fieldErrors = collectFieldErrors();
+  const labelInput = document.querySelector<HTMLInputElement>(`[data-path-label="${seedId}:${pathId}"]`);
+  if (labelInput) labelInput.classList.toggle('field-error', hasFieldError(fieldErrors, 'pathLabel', key));
+  const pathInput = document.querySelector<HTMLInputElement>(`[data-path-value="${seedId}:${pathId}"]`);
+  if (pathInput) pathInput.classList.toggle('field-error', hasFieldError(fieldErrors, 'pathValue', key));
+  const passphraseLabelInput = document.querySelector<HTMLInputElement>(
+    `[data-path-passphrase-label="${seedId}:${pathId}"]`
+  );
+  if (passphraseLabelInput) {
+    passphraseLabelInput.classList.toggle(
+      'field-error',
+      hasFieldError(fieldErrors, 'pathPassphraseLabel', key)
+    );
+  }
+  const countInput = document.querySelector<HTMLInputElement>(`[data-path-count="${seedId}:${pathId}"]`);
+  if (countInput) countInput.classList.toggle('field-error', hasFieldError(fieldErrors, 'pathCount', key));
+};
+
+const syncSecurityFieldErrorUI = () => {
+  if (state.currentStep !== 'security') return;
+  const fieldErrors = collectFieldErrors();
+  const passwordInput = document.querySelector<HTMLInputElement>('[data-password]');
+  if (passwordInput) passwordInput.classList.toggle('field-error', hasFieldError(fieldErrors, 'password'));
+  const confirmInput = document.querySelector<HTMLInputElement>('[data-confirm]');
+  if (confirmInput) confirmInput.classList.toggle('field-error', hasFieldError(fieldErrors, 'confirm'));
+  const argonTimeInput = document.querySelector<HTMLInputElement>('[data-argon-time]');
+  if (argonTimeInput) argonTimeInput.classList.toggle('field-error', hasFieldError(fieldErrors, 'argonTime'));
+  const argonMemoryInput = document.querySelector<HTMLInputElement>('[data-argon-memory]');
+  if (argonMemoryInput) argonMemoryInput.classList.toggle('field-error', hasFieldError(fieldErrors, 'argonMemory'));
+  const argonParallelInput = document.querySelector<HTMLInputElement>('[data-argon-parallelism]');
+  if (argonParallelInput) {
+    argonParallelInput.classList.toggle('field-error', hasFieldError(fieldErrors, 'argonParallelism'));
+  }
+  const thresholdInput = document.querySelector<HTMLInputElement>('[data-threshold]');
+  if (thresholdInput) thresholdInput.classList.toggle('field-error', hasFieldError(fieldErrors, 'threshold'));
+  const totalInput = document.querySelector<HTMLInputElement>('[data-total]');
+  if (totalInput) totalInput.classList.toggle('field-error', hasFieldError(fieldErrors, 'total'));
+};
+
+const syncSecurityNextButtonState = () => {
+  const nextButton = document.querySelector<HTMLButtonElement>('[data-step-next]');
+  if (!nextButton) return;
+  nextButton.disabled = state.isGenerating || isShamirFinalizeBlocked();
+};
+
+const syncShamirPreparationUI = () => {
+  if (state.currentStep !== 'security' || state.encryption.mode !== 'shamir') return;
+  const isReady = hasPreparedShamirForCurrentState();
+  const status = document.querySelector<HTMLParagraphElement>('[data-shamir-prep-status]');
+  if (status) {
+    status.textContent = isReady
+      ? 'Shares prepared. You can continue to Finalize.'
+      : 'Generate and review Shamir shares to enable Next: Finalize.';
+    status.classList.toggle('ok', isReady);
+    status.classList.toggle('error', !isReady);
+  }
+  const button = document.querySelector<HTMLButtonElement>('[data-prepare-shamir]');
+  if (button) {
+    button.textContent = isReady ? 'Regenerate Shamir Shares' : 'Generate Shamir Shares';
+  }
+  syncSecurityNextButtonState();
+};
+
+const bindPathFieldListeners = (scope: ParentNode) => {
+  scope.querySelectorAll<HTMLButtonElement>('[data-remove-path]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const [seedId, pathId] = (btn.dataset.removePath ?? '').split(':');
+      const seed = state.seeds.find((s) => s.id === seedId);
+      if (!seed || !canRemovePath(seed.paths.length)) return;
+      invalidateShamirPreparation();
+      seed.paths = seed.paths.filter((path) => path.id !== pathId);
+      if (seed.paths.length === 0) {
+        const defaultPreset = HD_PATH_PRESETS[0];
+        const label = buildAutoPathLabel(getSeedDisplayName(seed), defaultPreset.label, 1);
+        seed.paths.push(createPath(defaultPreset, label, false));
+      }
+      render();
+    });
+  });
+
+  scope.querySelectorAll<HTMLSelectElement>('[data-path-preset]').forEach((select) => {
+    select.addEventListener('change', () => {
+      const [seedId, pathId] = (select.dataset.pathPreset ?? '').split(':');
+      const seed = state.seeds.find((s) => s.id === seedId);
+      const path = seed?.paths.find((p) => p.id === pathId);
+      if (!path) return;
+      invalidateShamirPreparation();
+      const preset = HD_PATH_PRESETS.find((p) => p.id === select.value);
+      if (preset) {
+        path.preset = preset.id;
+        path.path = preset.path;
+        if (!path.labelCustomized) {
+          path.label = buildCurrentAutoPathLabel(seed, path, preset.id);
+        }
+      } else {
+        path.preset = 'custom';
+      }
+      schedulePreview(seed, path);
+      render();
+    });
+  });
+
+  scope.querySelectorAll<HTMLInputElement>('[data-path-label]').forEach((input) => {
+    input.addEventListener('input', () => {
+      const [seedId, pathId] = (input.dataset.pathLabel ?? '').split(':');
+      const seed = state.seeds.find((s) => s.id === seedId);
+      const path = seed?.paths.find((p) => p.id === pathId);
+      if (path && seed) {
+        invalidateShamirPreparation();
+        path.label = input.value;
+        const autoLabel = buildCurrentAutoPathLabel(seed, path);
+        path.labelCustomized = input.value.trim().length > 0 && input.value !== autoLabel;
+      }
+      syncPathFieldErrorUI(seedId, pathId);
+    });
+  });
+
+  scope.querySelectorAll<HTMLInputElement>('[data-path-value]').forEach((input) => {
+    input.addEventListener('input', () => {
+      const [seedId, pathId] = (input.dataset.pathValue ?? '').split(':');
+      const seed = state.seeds.find((s) => s.id === seedId);
+      const path = seed?.paths.find((p) => p.id === pathId);
+      if (path) {
+        invalidateShamirPreparation();
+        path.path = input.value;
+        path.preset = 'custom';
+        schedulePreview(seed!, path);
+      }
+      render();
+    });
+  });
+
+  scope.querySelectorAll<HTMLInputElement>('[data-path-passphrase]').forEach((input) => {
+    input.addEventListener('input', () => {
+      const [seedId, pathId] = (input.dataset.pathPassphrase ?? '').split(':');
+      const seed = state.seeds.find((s) => s.id === seedId);
+      const path = seed?.paths.find((p) => p.id === pathId);
+      if (path) {
+        invalidateShamirPreparation();
+        path.passphrase = input.value;
+        schedulePreview(seed!, path);
+      }
+      syncPathFieldErrorUI(seedId, pathId);
+    });
+  });
+
+  scope.querySelectorAll<HTMLInputElement>('[data-path-passphrase-label]').forEach((input) => {
+    input.addEventListener('input', () => {
+      const [seedId, pathId] = (input.dataset.pathPassphraseLabel ?? '').split(':');
+      const seed = state.seeds.find((s) => s.id === seedId);
+      const path = seed?.paths.find((p) => p.id === pathId);
+      if (path) {
+        invalidateShamirPreparation();
+        path.passphraseLabel = input.value;
+      }
+      syncPathFieldErrorUI(seedId, pathId);
+    });
+  });
+
+  scope.querySelectorAll<HTMLInputElement>('[data-path-count]').forEach((input) => {
+    const handleCountChange = () => {
+      const [seedId, pathId] = (input.dataset.pathCount ?? '').split(':');
+      const seed = state.seeds.find((s) => s.id === seedId);
+      const path = seed?.paths.find((p) => p.id === pathId);
+      if (path) {
+        invalidateShamirPreparation();
+        path.deriveCount = Number(input.value);
+        schedulePreview(seed!, path);
+      }
+      syncPathFieldErrorUI(seedId, pathId);
+    };
+    input.addEventListener('input', handleCountChange);
+    input.addEventListener('change', handleCountChange);
+  });
+};
+
+const syncPathsPreviewWarningUI = () => {
+  if (state.currentStep !== 'paths') return false;
+  const section = document.querySelector<HTMLElement>('[data-paths-section]');
+  const warningHost = section?.querySelector<HTMLElement>('[data-paths-preview-warning-host]');
+  if (!warningHost) return false;
+
+  warningHost.replaceChildren();
+  if (shouldShowLargePreviewWarning(getTotalPreviewCount(state.seeds))) {
+    warningHost.appendChild(buildPathsPreviewWarning());
+  }
+  return true;
+};
+
+const appendPathCard = (seed: SeedForm, path: PathForm) => {
+  if (state.currentStep !== 'paths') return false;
+  const pathsContainer = document.querySelector<HTMLElement>(`[data-seed-paths-container="${seed.id}"]`);
+  if (!pathsContainer) return false;
+
+  const fieldErrors = collectFieldErrors();
+  const pathEl = buildPathCard(seed, path, fieldErrors);
+  pathsContainer.appendChild(pathEl);
+  bindPathFieldListeners(pathEl);
+  syncRemovePathButtonsForSeed(seed);
+  return true;
+};
+
+const buildShamirSharesPanel = (
+  shares: Array<{ id: number; words: string; hex: string }>,
+  title: string,
+  helperText: string
+) => {
+  const sharesEl = el('div', { className: 'shares' });
+  sharesEl.appendChild(el('h3', { text: title }));
+  sharesEl.appendChild(
+    el('p', {
+      className: 'helper',
+      text: helperText
+    })
+  );
+  const toggle = el('div', { className: 'toggle' });
+  const wordsLabel = el('label');
+  wordsLabel.appendChild(
+    el('input', { type: 'radio', name: 'share-display', value: 'words', checked: true })
+  );
+  wordsLabel.appendChild(document.createTextNode(' Words'));
+  const hexLabel = el('label');
+  hexLabel.appendChild(el('input', { type: 'radio', name: 'share-display', value: 'hex' }));
+  hexLabel.appendChild(document.createTextNode(' Hex'));
+  toggle.appendChild(wordsLabel);
+  toggle.appendChild(hexLabel);
+  sharesEl.appendChild(toggle);
+
+  shares.forEach((share) => {
+    const shareEl = el('div', { className: 'share', dataset: { share: String(share.id) } });
+    shareEl.appendChild(el('strong', { text: `Share ${share.id}` }));
+    shareEl.appendChild(el('textarea', { readOnly: true, value: share.words }));
+    shareEl.appendChild(el('textarea', { className: 'hidden', readOnly: true, value: share.hex }));
+    sharesEl.appendChild(shareEl);
+  });
+
+  return sharesEl;
+};
+
+const prepareShamirShares = () => {
+  state.securityValidationArmed = true;
+  const errors = [...validateSeedsSection(), ...validatePathsSection(), ...validateSecuritySection()];
+  if (errors.length) {
+    state.stepError = errors[0];
+    render();
+    return;
+  }
+
+  try {
+    const data = buildVaultData();
+    const { vault, shares } = encryptWithShamir({
+      data,
+      threshold: state.encryption.threshold,
+      totalShares: state.encryption.totalShares,
+      hint: state.encryption.hint.trim() || undefined
+    });
+    const vaultHtml = buildVaultHtml(vault);
+    state.preparedShamir = {
+      fingerprint: buildShamirFingerprint(data),
+      vaultHtml,
+      shares: shares.map((share) => ({
+        id: share.id,
+        words: formatShareMnemonic(share),
+        hex: formatShareHex(share)
+      }))
+    };
+    state.stepError = '';
+    setStatus('Shamir shares generated. Review them, then continue to Finalize.', 'info');
+  } catch (error) {
+    setStatus((error as Error).message, 'error');
+  }
+};
+
+const buildSecuritySection = () => {
+  const fieldErrors = collectFieldErrors();
   const argonCustomValidation =
     state.encryption.mode === 'password' && state.encryption.argonPresetId === 'custom'
       ? validateArgon2Params(state.encryption.argonCustom)
       : { valid: true };
 
-  const section = el('section', { className: 'card' });
-  section.appendChild(el('h2', { text: 'Encryption' }));
+  const section = el('section', { className: 'card wizard-card' });
+  section.appendChild(
+    el('div', { className: 'card__header' }, [
+      el('div', {}, [
+        el('h2', { text: 'Step 3: Choose Security Mode' }),
+        el('p', { className: 'helper', text: 'Pick password encryption or Shamir shares, then set recovery details.' })
+      ])
+    ])
+  );
 
   const toggle = el('div', { className: 'toggle' });
   const passwordLabel = el('label');
@@ -773,6 +1481,7 @@ const buildEncryptionSection = () => {
     section.appendChild(el('label', { text: 'Password' }));
     section.appendChild(
       el('input', {
+        className: hasFieldError(fieldErrors, 'password') ? 'field-error' : undefined,
         type: 'password',
         dataset: { password: '' },
         value: state.encryption.password
@@ -781,6 +1490,7 @@ const buildEncryptionSection = () => {
     section.appendChild(el('label', { text: 'Confirm Password' }));
     section.appendChild(
       el('input', {
+        className: hasFieldError(fieldErrors, 'confirm') ? 'field-error' : undefined,
         type: 'password',
         dataset: { confirm: '' },
         value: state.encryption.confirm
@@ -815,6 +1525,7 @@ const buildEncryptionSection = () => {
       const timeRow = el('div', { className: 'row' }, [
         el('label', { text: 'Time cost (t)' }),
         el('input', {
+          className: hasFieldError(fieldErrors, 'argonTime') ? 'field-error' : undefined,
           type: 'number',
           min: String(DEFAULT_ARGON2_MIN.timeCost),
           dataset: { argonTime: '' },
@@ -824,6 +1535,7 @@ const buildEncryptionSection = () => {
       const memoryRow = el('div', { className: 'row' }, [
         el('label', { text: 'Memory (MB)' }),
         el('input', {
+          className: hasFieldError(fieldErrors, 'argonMemory') ? 'field-error' : undefined,
           type: 'number',
           min: String(DEFAULT_ARGON2_MIN.memoryCostMB),
           dataset: { argonMemory: '' },
@@ -833,6 +1545,7 @@ const buildEncryptionSection = () => {
       const parallelRow = el('div', { className: 'row' }, [
         el('label', { text: 'Parallelism (p)' }),
         el('input', {
+          className: hasFieldError(fieldErrors, 'argonParallelism') ? 'field-error' : undefined,
           type: 'number',
           min: String(DEFAULT_ARGON2_MIN.parallelism),
           dataset: { argonParallelism: '' },
@@ -858,9 +1571,11 @@ const buildEncryptionSection = () => {
       );
     }
   } else {
+    const shamirReady = hasPreparedShamirForCurrentState();
     const thresholdRow = el('div', { className: 'row' }, [
       el('label', { text: 'Threshold (k)' }),
       el('input', {
+        className: hasFieldError(fieldErrors, 'threshold') ? 'field-error' : undefined,
         type: 'number',
         min: '2',
         max: '10',
@@ -871,6 +1586,7 @@ const buildEncryptionSection = () => {
     const totalRow = el('div', { className: 'row' }, [
       el('label', { text: 'Total Shares (n)' }),
       el('input', {
+        className: hasFieldError(fieldErrors, 'total') ? 'field-error' : undefined,
         type: 'number',
         min: String(state.encryption.threshold),
         max: '10',
@@ -880,6 +1596,33 @@ const buildEncryptionSection = () => {
     ]);
     section.appendChild(thresholdRow);
     section.appendChild(totalRow);
+    const shamirActions = el('div', { className: 'security-shamir__actions' });
+    shamirActions.appendChild(
+      el('button', {
+        className: 'primary security-shamir__prepare',
+        dataset: { prepareShamir: '' },
+        text: shamirReady ? 'Regenerate Shamir Shares' : 'Generate Shamir Shares'
+      })
+    );
+    section.appendChild(shamirActions);
+    section.appendChild(
+      el('p', {
+        className: `helper security-shamir__status ${shamirReady ? 'ok' : 'error'}`,
+        dataset: { shamirPrepStatus: '' },
+        text: shamirReady
+          ? 'Shares prepared. You can continue to Finalize.'
+          : 'Generate and review Shamir shares to enable Next: Finalize.'
+      })
+    );
+    if (shamirReady && state.preparedShamir) {
+      section.appendChild(
+        buildShamirSharesPanel(
+          state.preparedShamir.shares,
+          'Review Shamir Shares',
+          `Store these securely. You need ${state.encryption.threshold} shares to decrypt.`
+        )
+      );
+    }
   }
 
   section.appendChild(el('label', { text: 'Password Hint (optional)' }));
@@ -900,10 +1643,27 @@ const buildEncryptionSection = () => {
   return section;
 };
 
-const buildGenerateSection = () => {
-  const section = el('section', { className: 'card' });
-  section.appendChild(el('h2', { text: 'Generate Vault' }));
-  section.appendChild(el('div', { className: `status ${state.statusTone}`, text: state.status }));
+const buildFinalizeSection = () => {
+  const section = el('section', { className: 'card wizard-card' });
+  section.appendChild(
+    el('div', { className: 'card__header' }, [
+      el('div', {}, [
+        el('h2', { text: 'Step 4: Finalize Vault' }),
+        el('p', { className: 'helper', text: 'Review status, then generate a self-contained offline vault file.' })
+      ])
+    ])
+  );
+
+  const summary = el('div', { className: 'summary-grid' });
+  summary.appendChild(el('div', { className: 'summary-chip', text: `${state.seeds.length} seed${state.seeds.length === 1 ? '' : 's'}` }));
+  const totalPaths = state.seeds.reduce((sum, seed) => sum + seed.paths.length, 0);
+  summary.appendChild(el('div', { className: 'summary-chip', text: `${totalPaths} path${totalPaths === 1 ? '' : 's'}` }));
+  summary.appendChild(el('div', { className: 'summary-chip', text: `Mode: ${state.encryption.mode === 'password' ? 'Password' : 'Shamir'}` }));
+  section.appendChild(summary);
+
+  if (state.status !== DEFAULT_STATUS_MESSAGE) {
+    section.appendChild(el('div', { className: `status ${state.statusTone}`, text: state.status }));
+  }
 
   section.appendChild(
     el('button', {
@@ -920,51 +1680,74 @@ const buildGenerateSection = () => {
   section.appendChild(progress);
 
   if (state.generated && state.generated.shares.length) {
-    const sharesEl = el('div', { className: 'shares' });
-    sharesEl.appendChild(el('h3', { text: 'Shamir Shares' }));
-    sharesEl.appendChild(
-      el('p', {
-        className: 'helper',
-        text: `Record these shares securely. You need ${state.encryption.threshold} shares to decrypt.`
-      })
+    section.appendChild(
+      buildShamirSharesPanel(
+        state.generated.shares,
+        'Shamir Shares',
+        `Record these shares securely. You need ${state.encryption.threshold} shares to decrypt.`
+      )
     );
-    const toggle = el('div', { className: 'toggle' });
-    const wordsLabel = el('label');
-    wordsLabel.appendChild(
-      el('input', { type: 'radio', name: 'share-display', value: 'words', checked: true })
-    );
-    wordsLabel.appendChild(document.createTextNode(' Words'));
-    const hexLabel = el('label');
-    hexLabel.appendChild(el('input', { type: 'radio', name: 'share-display', value: 'hex' }));
-    hexLabel.appendChild(document.createTextNode(' Hex'));
-    toggle.appendChild(wordsLabel);
-    toggle.appendChild(hexLabel);
-    sharesEl.appendChild(toggle);
-
-    state.generated.shares.forEach((share) => {
-      const shareEl = el('div', { className: 'share', dataset: { share: String(share.id) } });
-      shareEl.appendChild(el('strong', { text: `Share ${share.id}` }));
-      shareEl.appendChild(el('textarea', { readOnly: true, value: share.words }));
-      shareEl.appendChild(el('textarea', { className: 'hidden', readOnly: true, value: share.hex }));
-      sharesEl.appendChild(shareEl);
-    });
-
-    section.appendChild(sharesEl);
   }
 
   return section;
 };
 
+const buildWizardNavigation = () => {
+  const wrapper = el('div', { className: 'wizard-controls-wrap' });
+  if (state.stepError) {
+    wrapper.appendChild(el('div', { className: 'status error step-error', dataset: { stepError: '' }, text: state.stepError }));
+  }
+
+  const controls = el('div', { className: 'wizard-controls' });
+  const currentIndex = getStepIndex(state.currentStep);
+  const previousLabel = currentIndex > 0 ? WIZARD_STEPS[currentIndex - 1].title : '';
+  const nextLabel = currentIndex < WIZARD_STEPS.length - 1 ? WIZARD_STEPS[currentIndex + 1].title : '';
+
+  controls.appendChild(
+    el('button', {
+      className: 'ghost',
+      dataset: { stepPrev: '' },
+      disabled: currentIndex === 0 || state.isGenerating,
+      text: currentIndex === 0 ? 'Back' : `Back: ${previousLabel}`
+    })
+  );
+
+  if (state.currentStep !== 'finalize') {
+    const nextDisabled = state.isGenerating || isShamirFinalizeBlocked();
+    controls.appendChild(
+      el('button', {
+        className: 'primary',
+        dataset: { stepNext: '' },
+        disabled: nextDisabled,
+        text: `Next: ${nextLabel}`
+      })
+    );
+  }
+
+  wrapper.appendChild(controls);
+  return wrapper;
+};
+
+const buildCurrentStepPanel = () => {
+  if (state.currentStep === 'seeds') return buildSeedsSection();
+  if (state.currentStep === 'paths') return buildPathsSection();
+  if (state.currentStep === 'security') return buildSecuritySection();
+  return buildFinalizeSection();
+};
+
 const buildApp = () => {
-  const main = el('main', { className: 'creator' });
+  const main = el('main', { className: 'creator wizard' });
   const header = el('header', { className: 'creator__header' }, [
     el('h1', { text: 'Seed Vault Creator' }),
-    el('p', { text: 'Build an offline, self-contained vault file for your Ethereum wallets.' })
+    el('p', { text: 'A guided, offline flow for seed phrases, derivation paths, and long-term recovery.' })
   ]);
   main.appendChild(header);
-  main.appendChild(buildSeedsSection());
-  main.appendChild(buildEncryptionSection());
-  main.appendChild(buildGenerateSection());
+  main.appendChild(buildWizardStepper());
+  if (!(state.currentStep === 'finalize' && state.status === DEFAULT_STATUS_MESSAGE)) {
+    main.appendChild(el('div', { className: `status status--banner ${state.statusTone}`, text: state.status }));
+  }
+  main.appendChild(buildCurrentStepPanel());
+  main.appendChild(buildWizardNavigation());
   return main;
 };
 
@@ -973,15 +1756,33 @@ const render = () => {
   if (!root) return;
   root.replaceChildren(buildApp());
 
+  root.querySelectorAll<HTMLButtonElement>('[data-step-link]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const stepId = button.dataset.stepLink as WizardStepId | undefined;
+      if (!stepId) return;
+      goToStep(stepId);
+    });
+  });
+
+  root.querySelector<HTMLButtonElement>('[data-step-next]')?.addEventListener('click', () => {
+    goToNextStep();
+  });
+
+  root.querySelector<HTMLButtonElement>('[data-step-prev]')?.addEventListener('click', () => {
+    goToPreviousStep();
+  });
+
   root.querySelector<HTMLButtonElement>('[data-add-seed]')?.addEventListener('click', () => {
-    state.seeds.push(createSeed());
+    state.seeds.push(createSeed(state.seeds.length));
+    invalidateShamirPreparation();
     render();
   });
 
   root.querySelectorAll<HTMLButtonElement>('[data-remove-seed]').forEach((btn) => {
     btn.addEventListener('click', () => {
       state.seeds = state.seeds.filter((seed) => seed.id !== btn.dataset.removeSeed);
-      if (state.seeds.length === 0) state.seeds.push(createSeed());
+      if (state.seeds.length === 0) state.seeds.push(createSeed(0));
+      invalidateShamirPreparation();
       render();
     });
   });
@@ -990,6 +1791,7 @@ const render = () => {
     input.addEventListener('input', () => {
       const seed = state.seeds.find((s) => s.id === input.dataset.seedLabel);
       if (seed) seed.label = input.value;
+      invalidateShamirPreparation();
     });
   });
 
@@ -1000,108 +1802,20 @@ const render = () => {
       if (seed) {
         seed.paths.forEach((path) => schedulePreview(seed, path));
       }
+      invalidateShamirPreparation();
       render();
     });
   });
 
-  root.querySelectorAll<HTMLButtonElement>('[data-add-path]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const seed = state.seeds.find((s) => s.id === btn.dataset.addPath);
-      if (!seed) return;
-      seed.paths.push(createPath());
-      render();
+  root.querySelectorAll<HTMLButtonElement>('[data-add-path-seed]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const seedId = button.dataset.addPathSeed;
+      if (!seedId) return;
+      addPathToSeed(seedId);
     });
   });
 
-  root.querySelectorAll<HTMLButtonElement>('[data-remove-path]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const [seedId, pathId] = (btn.dataset.removePath ?? '').split(':');
-      const seed = state.seeds.find((s) => s.id === seedId);
-      if (!seed) return;
-      seed.paths = seed.paths.filter((path) => path.id !== pathId);
-      if (seed.paths.length === 0) seed.paths.push(createPath());
-      render();
-    });
-  });
-
-  root.querySelectorAll<HTMLSelectElement>('[data-path-preset]').forEach((select) => {
-    select.addEventListener('change', () => {
-      const [seedId, pathId] = (select.dataset.pathPreset ?? '').split(':');
-      const seed = state.seeds.find((s) => s.id === seedId);
-      const path = seed?.paths.find((p) => p.id === pathId);
-      if (!path) return;
-      const preset = HD_PATH_PRESETS.find((p) => p.id === select.value);
-      if (preset) {
-        path.preset = preset.id;
-        path.path = preset.path;
-        path.label = preset.label;
-      } else {
-        path.preset = 'custom';
-      }
-      schedulePreview(seed, path);
-      render();
-    });
-  });
-
-  root.querySelectorAll<HTMLInputElement>('[data-path-label]').forEach((input) => {
-    input.addEventListener('input', () => {
-      const [seedId, pathId] = (input.dataset.pathLabel ?? '').split(':');
-      const seed = state.seeds.find((s) => s.id === seedId);
-      const path = seed?.paths.find((p) => p.id === pathId);
-      if (path) path.label = input.value;
-    });
-  });
-
-  root.querySelectorAll<HTMLInputElement>('[data-path-value]').forEach((input) => {
-    input.addEventListener('input', () => {
-      const [seedId, pathId] = (input.dataset.pathValue ?? '').split(':');
-      const seed = state.seeds.find((s) => s.id === seedId);
-      const path = seed?.paths.find((p) => p.id === pathId);
-      if (path) {
-        path.path = input.value;
-        path.preset = 'custom';
-        schedulePreview(seed!, path);
-      }
-      render();
-    });
-  });
-
-  root.querySelectorAll<HTMLInputElement>('[data-path-passphrase]').forEach((input) => {
-    input.addEventListener('input', () => {
-      const [seedId, pathId] = (input.dataset.pathPassphrase ?? '').split(':');
-      const seed = state.seeds.find((s) => s.id === seedId);
-      const path = seed?.paths.find((p) => p.id === pathId);
-      if (path) {
-        path.passphrase = input.value;
-        schedulePreview(seed!, path);
-      }
-    });
-  });
-
-  root.querySelectorAll<HTMLInputElement>('[data-path-passphrase-label]').forEach((input) => {
-    input.addEventListener('input', () => {
-      const [seedId, pathId] = (input.dataset.pathPassphraseLabel ?? '').split(':');
-      const seed = state.seeds.find((s) => s.id === seedId);
-      const path = seed?.paths.find((p) => p.id === pathId);
-      if (path) {
-        path.passphraseLabel = input.value;
-      }
-    });
-  });
-
-  root.querySelectorAll<HTMLInputElement>('[data-path-count]').forEach((input) => {
-    const handleCountChange = () => {
-      const [seedId, pathId] = (input.dataset.pathCount ?? '').split(':');
-      const seed = state.seeds.find((s) => s.id === seedId);
-      const path = seed?.paths.find((p) => p.id === pathId);
-      if (path) {
-        path.deriveCount = Number(input.value);
-        schedulePreview(seed!, path);
-      }
-    };
-    input.addEventListener('input', handleCountChange);
-    input.addEventListener('change', handleCountChange);
-  });
+  bindPathFieldListeners(root);
 
   root.querySelectorAll<HTMLInputElement>('input[name="mode"]').forEach((input) => {
     input.addEventListener('change', () => {
@@ -1115,6 +1829,7 @@ const render = () => {
     state.encryption.password = value;
     const strengthEl = root.querySelector<HTMLSpanElement>('[data-strength]');
     if (strengthEl) strengthEl.textContent = String(passwordStrength(value));
+    syncSecurityFieldErrorUI();
   });
 
   root.querySelector<HTMLSelectElement>('[data-argon-preset]')?.addEventListener('change', (event) => {
@@ -1130,6 +1845,7 @@ const render = () => {
       helper.textContent = validation.valid ? 'Custom parameters look good.' : validation.error ?? '';
       helper.classList.toggle('error', !validation.valid);
     }
+    syncSecurityFieldErrorUI();
   });
 
   root.querySelector<HTMLInputElement>('[data-argon-memory]')?.addEventListener('input', (event) => {
@@ -1140,6 +1856,7 @@ const render = () => {
       helper.textContent = validation.valid ? 'Custom parameters look good.' : validation.error ?? '';
       helper.classList.toggle('error', !validation.valid);
     }
+    syncSecurityFieldErrorUI();
   });
 
   root.querySelector<HTMLInputElement>('[data-argon-parallelism]')?.addEventListener('input', (event) => {
@@ -1150,27 +1867,47 @@ const render = () => {
       helper.textContent = validation.valid ? 'Custom parameters look good.' : validation.error ?? '';
       helper.classList.toggle('error', !validation.valid);
     }
+    syncSecurityFieldErrorUI();
   });
 
   root.querySelector<HTMLInputElement>('[data-confirm]')?.addEventListener('input', (event) => {
     state.encryption.confirm = (event.target as HTMLInputElement).value;
+    syncSecurityFieldErrorUI();
   });
 
   root.querySelector<HTMLInputElement>('[data-hint]')?.addEventListener('input', (event) => {
     state.encryption.hint = (event.target as HTMLInputElement).value;
+    invalidateShamirPreparation();
+    syncShamirPreparationUI();
   });
 
   root.querySelector<HTMLInputElement>('[data-threshold]')?.addEventListener('input', (event) => {
-    state.encryption.threshold = Number((event.target as HTMLInputElement).value);
+    const thresholdInput = event.target as HTMLInputElement;
+    state.encryption.threshold = Number(thresholdInput.value);
     if (state.encryption.totalShares < state.encryption.threshold) {
       state.encryption.totalShares = state.encryption.threshold;
     }
-    render();
+    const totalInput = root.querySelector<HTMLInputElement>('[data-total]');
+    if (totalInput) {
+      totalInput.min = String(state.encryption.threshold);
+      if (Number(totalInput.value) < state.encryption.threshold) {
+        totalInput.value = String(state.encryption.threshold);
+      }
+    }
+    invalidateShamirPreparation();
+    syncSecurityFieldErrorUI();
+    syncShamirPreparationUI();
   });
 
   root.querySelector<HTMLInputElement>('[data-total]')?.addEventListener('input', (event) => {
     state.encryption.totalShares = Number((event.target as HTMLInputElement).value);
-    render();
+    invalidateShamirPreparation();
+    syncSecurityFieldErrorUI();
+    syncShamirPreparationUI();
+  });
+
+  root.querySelector<HTMLButtonElement>('[data-prepare-shamir]')?.addEventListener('click', () => {
+    prepareShamirShares();
   });
 
   root.querySelector<HTMLButtonElement>('[data-generate]')?.addEventListener('click', handleGenerate);

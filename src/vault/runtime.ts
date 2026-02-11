@@ -218,81 +218,57 @@ const renderDerivedAddresses = () => {
     return;
   }
 
-  const groups = new Map<
-    string,
-    { seedLabel: string; path: string; passphrase: string; passphraseLabel: string; rows: typeof rows }
-  >();
-  rows.forEach((row) => {
-    const key = `${row.seedLabel}::${row.path}::${row.passphrase}::${row.passphraseLabel}`;
-    const existing = groups.get(key);
-    if (existing) {
-      existing.rows.push(row);
-    } else {
-      groups.set(key, {
-        seedLabel: row.seedLabel,
-        path: row.path,
-        passphrase: row.passphrase,
-        passphraseLabel: row.passphraseLabel,
-        rows: [row]
-      });
-    }
-  });
+  const tableWrap = el('div', { className: 'derived-table-wrap' });
+  const table = el<HTMLTableElement>('table', { className: 'derived-table' });
+  const head = el('thead');
+  const headRow = el('tr');
+  headRow.appendChild(el('th', { text: 'Seed' }));
+  headRow.appendChild(el('th', { text: 'Path' }));
+  headRow.appendChild(el('th', { text: 'Passphrase Label' }));
+  headRow.appendChild(el('th', { text: 'Passphrase' }));
+  headRow.appendChild(el('th', { text: 'Address' }));
+  head.appendChild(headRow);
+  table.appendChild(head);
 
-  let groupIndex = 0;
-  let rowNumber = 1;
-  groups.forEach((group) => {
-    const groupEl = el('section', { className: 'derived-group' });
-    const passphraseId = `derived-passphrase-${groupIndex}`;
-    const passphraseLabel = group.passphraseLabel?.trim();
+  const body = el('tbody');
+  rows.forEach((row, rowIndex) => {
+    const tableRow = el('tr');
+    tableRow.appendChild(el('td', { className: 'derived-table__seed', text: row.seedLabel }));
+    tableRow.appendChild(el('td', { className: 'derived-table__path', text: row.path }));
+    tableRow.appendChild(
+      el('td', {
+        className: 'derived-table__passphrase-label',
+        text: row.passphraseLabel.trim() || '[none]'
+      })
+    );
 
-    const header = el('div', { className: 'derived-group__header' });
-    const meta = el('div', { className: 'derived-group__meta' }, [
-      el('strong', { text: group.seedLabel }),
-      el('span', { text: group.path })
-    ]);
-    const passphraseMeta = el('div', { className: 'derived-group__passphrase' });
-
-    if (group.passphrase) {
-      const passphrase = el('div', { className: 'passphrase' });
-      const passHeader = el('div', { className: 'passphrase__header' }, [
-        el('span', { text: 'Passphrase' }),
-        el('button', { dataset: { reveal: passphraseId }, text: 'Reveal' })
-      ]);
-      passphrase.appendChild(passHeader);
-      passphrase.appendChild(el('p', { className: 'passphrase__label', text: passphraseLabel || '[unlabeled]' }));
-      passphrase.appendChild(
+    const passphraseCell = el('td', { className: 'derived-table__passphrase' });
+    if (row.passphrase) {
+      const passphraseId = `derived-passphrase-row-${rowIndex}`;
+      const revealWrap = el('div', { className: 'derived-table__passphrase-cell' });
+      revealWrap.appendChild(el('button', { dataset: { reveal: passphraseId }, text: 'Reveal' }));
+      revealWrap.appendChild(
         el('p', {
           className: 'secret secret--compact',
           id: passphraseId,
           dataset: { hidden: 'true' },
-          text: group.passphrase
+          text: row.passphrase
         })
       );
-      passphraseMeta.appendChild(passphrase);
+      passphraseCell.appendChild(revealWrap);
     } else {
-      passphraseMeta.appendChild(el('span', { text: 'Passphrase: [none]' }));
+      passphraseCell.appendChild(el('span', { className: 'derived-table__none', text: '[none]' }));
     }
+    tableRow.appendChild(passphraseCell);
 
-    header.appendChild(meta);
-    header.appendChild(passphraseMeta);
-    groupEl.appendChild(header);
-
-    const list = el('div', { className: 'derived-list' });
-    group.rows.forEach((row) => {
-      const item = el('div', { className: 'derived-item' });
-      const info = el('div', {}, [
-        el('p', { text: `#${rowNumber}` }),
-        el('p', { text: `Index ${row.index}` })
-      ]);
-      item.appendChild(info);
-      item.appendChild(el('code', { text: row.address }));
-      list.appendChild(item);
-      rowNumber += 1;
-    });
-    groupEl.appendChild(list);
-    container.appendChild(groupEl);
-    groupIndex += 1;
+    const addressCell = el('td', { className: 'derived-table__address' });
+    addressCell.appendChild(el('code', { text: row.address }));
+    tableRow.appendChild(addressCell);
+    body.appendChild(tableRow);
   });
+  table.appendChild(body);
+  tableWrap.appendChild(table);
+  container.appendChild(tableWrap);
 
   attachRevealHandlers(container);
 };
