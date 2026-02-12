@@ -254,6 +254,17 @@ const STYLE = `
     background: linear-gradient(135deg, #2ee4ea, #57cbff);
     transition: width 220ms var(--ease-snappy);
   }
+  .progress--indeterminate .bar {
+    width: 40%;
+    transition: none;
+    animation: vaultProgressIndeterminate 1.2s linear infinite;
+  }
+  .progress__text {
+    margin-top: var(--space-2);
+    margin-bottom: 0;
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+  }
   .vault-seed {
     padding: var(--space-4);
     border: 1px solid var(--color-border-subtle);
@@ -544,6 +555,10 @@ const STYLE = `
     margin-top: 0;
     padding: 0.32rem 0.64rem;
     font-size: var(--text-xs);
+  }
+  @keyframes vaultProgressIndeterminate {
+    0% { transform: translateX(-130%); }
+    100% { transform: translateX(330%); }
   }
   @keyframes vaultReveal {
     from { opacity: 0; transform: translateY(12px); }

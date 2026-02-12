@@ -77,6 +77,7 @@ interface PreparedShamirState {
 
 type WizardStepId = 'seeds' | 'files' | 'paths' | 'security' | 'finalize';
 type CreatorView = 'landing' | 'wizard' | 'faq';
+type GenerateProgressMode = 'idle' | 'determinate' | 'indeterminate';
 
 interface WizardStep {
   id: WizardStepId;
@@ -195,6 +196,7 @@ const state = {
   preparedShamir: undefined as PreparedShamirState | undefined,
   isGenerating: false,
   progress: 0,
+  progressMode: 'idle' as GenerateProgressMode,
   stepError: '',
   seedValidationArmed: false,
   filesValidationArmed: false,
@@ -322,6 +324,66 @@ const syncStatusUI = () => {
     finalizeStatus.remove();
   }
   return true;
+};
+
+const syncGenerateProgressUI = () => {
+  const root = document.querySelector<HTMLDivElement>('#app');
+  if (!root || state.view !== 'wizard' || state.currentStep !== 'finalize') return false;
+
+  const progress = root.querySelector<HTMLDivElement>('[data-generate-progress]');
+  const bar = root.querySelector<HTMLDivElement>('[data-generate-progress-bar]');
+  const text = root.querySelector<HTMLParagraphElement>('[data-generate-progress-text]');
+  if (!progress || !bar || !text) return false;
+
+  if (!state.isGenerating) {
+    progress.hidden = true;
+    progress.classList.remove('progress--indeterminate');
+    bar.style.width = '0%';
+    text.hidden = true;
+    text.textContent = '';
+    return true;
+  }
+
+  progress.hidden = false;
+  text.hidden = false;
+  if (state.progressMode === 'determinate') {
+    const clamped = Math.max(0, Math.min(100, Math.round(state.progress * 100)));
+    progress.classList.remove('progress--indeterminate');
+    bar.style.width = `${clamped}%`;
+    text.textContent = `Encrypting ${clamped}%`;
+  } else {
+    const fallbackPercent = Math.max(0, Math.min(95, Math.round(state.progress * 100)));
+    progress.classList.add('progress--indeterminate');
+    bar.style.width = '40%';
+    text.textContent = `Encrypting ${fallbackPercent}%`;
+  }
+
+  return true;
+};
+
+let generateProgressFallbackTimerId: number | undefined;
+
+const stopGenerateProgressFallback = () => {
+  if (!generateProgressFallbackTimerId) return;
+  window.clearInterval(generateProgressFallbackTimerId);
+  generateProgressFallbackTimerId = undefined;
+};
+
+const startGenerateProgressFallback = () => {
+  stopGenerateProgressFallback();
+  generateProgressFallbackTimerId = window.setInterval(() => {
+    if (!state.isGenerating) {
+      stopGenerateProgressFallback();
+      return;
+    }
+    if (state.progressMode !== 'indeterminate') {
+      stopGenerateProgressFallback();
+      return;
+    }
+    state.progress = Math.min(0.95, state.progress + 0.02);
+    const progressSynced = syncGenerateProgressUI();
+    if (!progressSynced) render();
+  }, 180);
 };
 
 const setStatus = (message: string, tone: 'info' | 'error' = 'info') => {
@@ -1103,13 +1165,18 @@ const handleGenerate = async () => {
 
   state.isGenerating = true;
   state.progress = 0;
+  state.progressMode = 'indeterminate';
   render();
+  startGenerateProgressFallback();
 
   try {
     const data = buildVaultData();
     const onProgress = (value: number) => {
-      state.progress = value;
-      render();
+      stopGenerateProgressFallback();
+      state.progress = Math.max(0, Math.min(1, value));
+      state.progressMode = 'determinate';
+      const progressSynced = syncGenerateProgressUI();
+      if (!progressSynced) render();
     };
 
     if (state.encryption.mode === 'password') {
@@ -1150,8 +1217,10 @@ const handleGenerate = async () => {
   } catch (error) {
     setStatus((error as Error).message, 'error');
   } finally {
+    stopGenerateProgressFallback();
     state.isGenerating = false;
     state.progress = 0;
+    state.progressMode = 'idle';
     render();
   }
 };
@@ -2483,10 +2552,30 @@ const buildFinalizeSection = () => {
   ]);
   section.appendChild(downloadActions);
 
-  const progress = el('div', { className: 'progress', hidden: !state.isGenerating });
-  const bar = el('div', { className: 'bar', attrs: { style: `width: ${Math.round(state.progress * 100)}%` } });
+  const progressClassName =
+    state.isGenerating && state.progressMode === 'indeterminate' ? 'progress progress--indeterminate' : 'progress';
+  const progressWidth = state.progressMode === 'determinate' ? Math.max(0, Math.min(100, Math.round(state.progress * 100))) : 40;
+  const progress = el('div', { className: progressClassName, hidden: !state.isGenerating, dataset: { generateProgress: '' } });
+  const bar = el('div', {
+    className: 'bar',
+    dataset: { generateProgressBar: '' },
+    attrs: { style: `width: ${progressWidth}%` }
+  });
   progress.appendChild(bar);
   section.appendChild(progress);
+  section.appendChild(
+    el('p', {
+      className: 'helper progress__text',
+      dataset: { generateProgressText: '' },
+      hidden: !state.isGenerating,
+      text:
+        state.isGenerating && state.progressMode === 'determinate'
+          ? `Encrypting ${Math.max(0, Math.min(100, Math.round(state.progress * 100)))}%`
+          : state.isGenerating
+            ? `Encrypting ${Math.max(0, Math.min(95, Math.round(state.progress * 100)))}%`
+            : ''
+    })
+  );
 
   if (state.generated && state.generated.shares.length) {
     section.appendChild(

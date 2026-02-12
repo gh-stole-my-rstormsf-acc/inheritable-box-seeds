@@ -22,6 +22,8 @@ export interface VaultRuntimeHandlers {
   }) => VaultData;
 }
 
+type DecryptProgressMode = 'determinate' | 'indeterminate';
+
 const state: {
   decrypted?: VaultData;
   derivedRows?: Array<{
@@ -123,8 +125,71 @@ const el = <T extends HTMLElement>(
 const setStatus = (message: string, tone: 'info' | 'error' = 'info') => {
   const status = document.querySelector<HTMLDivElement>('[data-status]');
   if (!status) return;
-  status.textContent = message;
+  const trimmedMessage = message.trim();
+  status.textContent = trimmedMessage;
   status.dataset.tone = tone;
+  status.hidden = trimmedMessage.length === 0;
+};
+
+const syncVaultSectionsVisibility = () => {
+  const hasDecrypted = Boolean(state.decrypted);
+  const hasFiles = Boolean(state.decrypted?.files?.length);
+
+  const seedsSection = document.querySelector<HTMLElement>('[data-vault-seeds-section]');
+  if (seedsSection) seedsSection.hidden = !hasDecrypted;
+
+  const filesSection = document.querySelector<HTMLElement>('[data-vault-files-section]');
+  if (filesSection) filesSection.hidden = !hasDecrypted || !hasFiles;
+
+  const derivedSection = document.querySelector<HTMLElement>('[data-vault-derived-section]');
+  if (derivedSection) derivedSection.hidden = !hasDecrypted;
+};
+
+const syncDerivedActionsState = () => {
+  const deriveButton = document.querySelector<HTMLButtonElement>('[data-derive]');
+  const exportButton = document.querySelector<HTMLButtonElement>('[data-export]');
+  const hasDecrypted = Boolean(state.decrypted);
+  const hasDerivedRows = Boolean(state.derivedRows?.length);
+
+  if (deriveButton) deriveButton.disabled = !hasDecrypted;
+  if (exportButton) exportButton.disabled = !hasDecrypted || !hasDerivedRows;
+};
+
+const setDecryptProgress = (input: {
+  visible: boolean;
+  mode?: DecryptProgressMode;
+  progress?: number;
+  text?: string;
+}) => {
+  const progress = document.querySelector<HTMLDivElement>('[data-decrypt-progress]');
+  const progressBar = document.querySelector<HTMLDivElement>('[data-decrypt-progress-bar]');
+  const progressText = document.querySelector<HTMLParagraphElement>('[data-decrypt-progress-text]');
+  if (!progress || !progressBar || !progressText) return;
+
+  if (!input.visible) {
+    progress.hidden = true;
+    progress.classList.remove('progress--indeterminate');
+    progressBar.style.width = '0%';
+    progressText.hidden = true;
+    progressText.textContent = '';
+    return;
+  }
+
+  const mode = input.mode ?? 'indeterminate';
+  progress.hidden = false;
+  progressText.hidden = false;
+
+  if (mode === 'determinate') {
+    const clamped = Math.max(0, Math.min(100, Math.round((input.progress ?? 0) * 100)));
+    progress.classList.remove('progress--indeterminate');
+    progressBar.style.width = `${clamped}%`;
+    progressText.textContent = input.text ?? `Decrypting ${clamped}%`;
+    return;
+  }
+
+  progress.classList.add('progress--indeterminate');
+  progressBar.style.width = '40%';
+  progressText.textContent = input.text ?? 'Decrypting 0%';
 };
 
 const formatBytes = (value: number) => {
@@ -241,13 +306,11 @@ const renderVaultFiles = (data?: VaultData) => {
   container.replaceChildren();
 
   if (!data) {
-    container.appendChild(el('p', { className: 'vault-files__empty', text: 'Decrypt vault to view attached files.' }));
     return;
   }
 
   const files = data.files ?? [];
   if (!files.length) {
-    container.appendChild(el('p', { className: 'vault-files__empty', text: 'No attached files in this vault.' }));
     return;
   }
 
@@ -312,7 +375,7 @@ const renderDerivedAddresses = () => {
   container.replaceChildren();
   const rows = state.derivedRows ?? [];
   if (!rows.length) {
-    container.appendChild(el('p', { text: 'No derived addresses yet.' }));
+    syncDerivedActionsState();
     return;
   }
 
@@ -369,6 +432,7 @@ const renderDerivedAddresses = () => {
   container.appendChild(tableWrap);
 
   attachRevealHandlers(container);
+  syncDerivedActionsState();
 };
 
 const handleDeriveAddresses = () => {
@@ -403,6 +467,7 @@ const handleDeriveAddresses = () => {
   });
   state.derivedRows = rows;
   renderDerivedAddresses();
+  syncDerivedActionsState();
   scheduleAutoClear();
 };
 
@@ -482,8 +547,35 @@ const recordSuccess = () => {
 
 const AUTO_CLEAR_MS = 5 * 60 * 1000;
 let clearTimerId: number | undefined;
+let decryptProgressFallbackTimerId: number | undefined;
+let decryptProgressFallbackValue = 0;
+
+const stopDecryptProgressFallback = () => {
+  if (!decryptProgressFallbackTimerId) return;
+  window.clearInterval(decryptProgressFallbackTimerId);
+  decryptProgressFallbackTimerId = undefined;
+};
+
+const startDecryptProgressFallback = (label: string) => {
+  stopDecryptProgressFallback();
+  decryptProgressFallbackValue = 0;
+  setDecryptProgress({
+    visible: true,
+    mode: 'indeterminate',
+    text: `${label} ${decryptProgressFallbackValue}%`
+  });
+  decryptProgressFallbackTimerId = window.setInterval(() => {
+    decryptProgressFallbackValue = Math.min(95, decryptProgressFallbackValue + 2);
+    setDecryptProgress({
+      visible: true,
+      mode: 'indeterminate',
+      text: `${label} ${decryptProgressFallbackValue}%`
+    });
+  }, 180);
+};
 
 const clearDecryptedState = (reason: 'user' | 'timeout' | 'unload', silent = false) => {
+  stopDecryptProgressFallback();
   state.decrypted = undefined;
   state.derivedRows = undefined;
   const seeds = document.querySelector('[data-seeds]');
@@ -491,6 +583,9 @@ const clearDecryptedState = (reason: 'user' | 'timeout' | 'unload', silent = fal
   const derived = document.querySelector('[data-derived]');
   if (derived) derived.replaceChildren();
   renderVaultFiles(undefined);
+  syncVaultSectionsVisibility();
+  syncDerivedActionsState();
+  setDecryptProgress({ visible: false });
   if (!silent) {
     setStatus(reason === 'timeout' ? 'Decrypted data cleared due to inactivity.' : 'Decrypted data cleared.', 'info');
   }
@@ -516,20 +611,31 @@ const renderApp = (handlers: VaultRuntimeHandlers) => {
   const decryptSection = el('section', { className: 'vault-card' });
   decryptSection.appendChild(el('h2', { text: 'Decrypt Vault' }));
   decryptSection.appendChild(el('p', { className: 'hint', text: vault.hint ? `Hint: ${vault.hint}` : 'No hint stored.' }));
-  decryptSection.appendChild(el('div', { className: 'status', dataset: { status: '' }, attrs: { 'data-tone': 'info' } }));
+  decryptSection.appendChild(
+    el('div', {
+      className: 'status',
+      dataset: { status: '' },
+      attrs: { 'data-tone': 'info' },
+      hidden: true
+    })
+  );
   const decryptContainer = el('div', { className: 'decrypt', dataset: { decrypt: '' } });
   decryptSection.appendChild(decryptContainer);
+  const decryptProgress = el('div', { className: 'progress', hidden: true, dataset: { decryptProgress: '' } });
+  decryptProgress.appendChild(el('div', { className: 'bar', dataset: { decryptProgressBar: '' } }));
+  decryptSection.appendChild(decryptProgress);
+  decryptSection.appendChild(el('p', { className: 'progress__text', hidden: true, dataset: { decryptProgressText: '' } }));
   const clearActions = el('div', { className: 'actions' }, [
     el('button', { dataset: { clear: '' }, text: 'Clear Decrypted Data' })
   ]);
   decryptSection.appendChild(clearActions);
 
-  const seedsSection = el('section', { className: 'vault-card' }, [
+  const seedsSection = el('section', { className: 'vault-card', dataset: { vaultSeedsSection: '' }, hidden: true }, [
     el('h2', { text: 'Seeds' }),
     el('div', { dataset: { seeds: '' } })
   ]);
 
-  const filesSection = el('section', { className: 'vault-card' }, [
+  const filesSection = el('section', { className: 'vault-card', dataset: { vaultFilesSection: '' }, hidden: true }, [
     el('h2', { text: 'Attached Files' }),
     el('p', {
       className: 'hint',
@@ -538,12 +644,12 @@ const renderApp = (handlers: VaultRuntimeHandlers) => {
     el('div', { dataset: { files: '' } })
   ]);
 
-  const derivedSection = el('section', { className: 'vault-card' });
+  const derivedSection = el('section', { className: 'vault-card', dataset: { vaultDerivedSection: '' }, hidden: true });
   derivedSection.appendChild(el('h2', { text: 'Derived Addresses' }));
   derivedSection.appendChild(
     el('div', { className: 'actions' }, [
-      el('button', { dataset: { derive: '' }, text: 'Derive Addresses' }),
-      el('button', { dataset: { export: '' }, text: 'Export CSV' })
+      el('button', { dataset: { derive: '' }, text: 'Derive Addresses', disabled: true }),
+      el('button', { dataset: { export: '' }, text: 'Export CSV', disabled: true })
     ])
   );
   derivedSection.appendChild(el('div', { dataset: { derived: '' } }));
@@ -568,10 +674,6 @@ const renderApp = (handlers: VaultRuntimeHandlers) => {
     decryptEl.appendChild(passwordInput);
     const decryptButton = el<HTMLButtonElement>('button', { dataset: { decryptBtn: '' }, text: 'Decrypt' });
     decryptEl.appendChild(decryptButton);
-    const progress = el<HTMLDivElement>('div', { className: 'progress', hidden: true, dataset: { progress: '' } });
-    const progressBar = el<HTMLDivElement>('div', { className: 'bar', dataset: { progressBar: '' } });
-    progress.appendChild(progressBar);
-    decryptEl.appendChild(progress);
 
     decryptButton.addEventListener('click', async () => {
       if (!passwordInput.value) {
@@ -586,8 +688,7 @@ const renderApp = (handlers: VaultRuntimeHandlers) => {
         return;
       }
       setStatus('Decrypting...', 'info');
-      progress.hidden = false;
-      progressBar.style.width = '0%';
+      startDecryptProgressFallback('Decrypting');
       try {
         if (!handlers.decryptPassword) {
           throw new Error('Password decryption handler missing.');
@@ -596,21 +697,31 @@ const renderApp = (handlers: VaultRuntimeHandlers) => {
           password: passwordInput.value,
           vault,
           onProgress: (value) => {
-            progressBar.style.width = `${Math.round(value * 100)}%`;
+            stopDecryptProgressFallback();
+            setDecryptProgress({
+              visible: true,
+              mode: 'determinate',
+              progress: Math.max(0, Math.min(1, value))
+            });
           }
         });
         recordSuccess();
         state.decrypted = data;
+        state.derivedRows = undefined;
         setStatus('Vault decrypted.', 'info');
+        syncVaultSectionsVisibility();
         renderSeedList(data);
         renderVaultFiles(data);
+        renderDerivedAddresses();
+        syncDerivedActionsState();
         passwordInput.value = '';
         scheduleAutoClear();
       } catch (error) {
         recordFailure(entry);
         setStatus((error as Error).message, 'error');
       } finally {
-        progress.hidden = true;
+        stopDecryptProgressFallback();
+        setDecryptProgress({ visible: false });
       }
     });
   } else {
@@ -638,7 +749,7 @@ const renderApp = (handlers: VaultRuntimeHandlers) => {
     const decryptButton = el<HTMLButtonElement>('button', { dataset: { decryptBtn: '' }, text: 'Decrypt' });
     decryptEl.appendChild(decryptButton);
 
-    decryptButton.addEventListener('click', () => {
+    decryptButton.addEventListener('click', async () => {
       let entry: { count: number; lastAttempt: number } | undefined;
       try {
         const format = (decryptEl.querySelector<HTMLInputElement>('input[name="shareFormat"]:checked')?.value ??
@@ -658,17 +769,29 @@ const renderApp = (handlers: VaultRuntimeHandlers) => {
           ? handlers.parseShamirShares({ shareValues, format })
           : shareValues;
         entry = enforceRateLimit();
+        setStatus('Decrypting...', 'info');
+        startDecryptProgressFallback('Decrypting');
+        await new Promise<void>((resolve) => {
+          window.requestAnimationFrame(() => resolve());
+        });
         const data = handlers.decryptShamir({ shares, vault });
         recordSuccess();
         state.decrypted = data;
+        state.derivedRows = undefined;
         setStatus('Vault decrypted.', 'info');
+        syncVaultSectionsVisibility();
         renderSeedList(data);
         renderVaultFiles(data);
+        renderDerivedAddresses();
+        syncDerivedActionsState();
         shareInputs.forEach((input) => (input.value = ''));
         scheduleAutoClear();
       } catch (error) {
         if (entry) recordFailure(entry);
         setStatus((error as Error).message, 'error');
+      } finally {
+        stopDecryptProgressFallback();
+        setDecryptProgress({ visible: false });
       }
     });
   }
@@ -681,6 +804,9 @@ const renderApp = (handlers: VaultRuntimeHandlers) => {
 
   renderVaultFiles(state.decrypted);
   renderDerivedAddresses();
+  syncVaultSectionsVisibility();
+  syncDerivedActionsState();
+  setDecryptProgress({ visible: false });
 };
 
 export const startVaultRuntime = (handlers: VaultRuntimeHandlers) => {

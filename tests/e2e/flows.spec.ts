@@ -98,9 +98,14 @@ const downloadVault = async (page: any, testInfo: any, filename: string) => {
   return vaultPath;
 };
 
-const decryptVault = async (context: any, vaultPath: string, password = longPassword) => {
+const openVault = async (context: any, vaultPath: string) => {
   const vaultPage = await context.newPage();
   await vaultPage.goto(pathToFileURL(vaultPath).toString());
+  return vaultPage;
+};
+
+const decryptVault = async (context: any, vaultPath: string, password = longPassword) => {
+  const vaultPage = await openVault(context, vaultPath);
   await vaultPage.fill('input[data-password]', password);
   await vaultPage.click('[data-decrypt-btn]');
   return vaultPage;
@@ -180,11 +185,21 @@ test('password encryption flow', async ({ page, context }, testInfo) => {
   expect(passwordVaultHtml).toContain('argon2.wasm');
   expect(passwordVaultHtml).not.toContain('Share must include id prefix like "1: <share>".');
 
-  const vaultPage = await decryptVault(context, vaultPath);
+  const vaultPage = await openVault(context, vaultPath);
+  await expect(vaultPage.locator('[data-vault-seeds-section]')).toBeHidden();
+  await expect(vaultPage.locator('[data-vault-files-section]')).toBeHidden();
+  await expect(vaultPage.locator('[data-vault-derived-section]')).toBeHidden();
+  await vaultPage.fill('input[data-password]', longPassword);
+  await vaultPage.click('[data-decrypt-btn]');
   await expect(vaultPage.locator('[data-seeds] .vault-seed')).toHaveCount(1, { timeout: 60000 });
+  await expect(vaultPage.locator('[data-vault-seeds-section]')).toBeVisible();
+  await expect(vaultPage.locator('[data-vault-derived-section]')).toBeVisible();
+  await expect(vaultPage.locator('[data-vault-files-section]')).toBeHidden();
+  await expect(vaultPage.locator('[data-export]')).toBeDisabled();
 
   await vaultPage.click('[data-derive]');
   await expect(vaultPage.locator('.derived-table code')).toHaveCount(1);
+  await expect(vaultPage.locator('[data-export]')).toBeEnabled();
   await expect(vaultPage.locator('[data-derived] th', { hasText: /^Index$/ })).toHaveCount(0);
   await expect(vaultPage.locator('[data-derived]')).not.toContainText(/Index\s+\d+/i);
 
@@ -217,6 +232,7 @@ test('password encryption flow with attached files', async ({ page, context }, t
   const vaultPath = await downloadVault(page, testInfo, 'vault-with-files.html');
   const vaultPage = await decryptVault(context, vaultPath);
   await expect(vaultPage.locator('[data-files] .vault-files__table')).toHaveCount(1, { timeout: 60000 });
+  await expect(vaultPage.locator('[data-vault-files-section]')).toBeVisible();
   await expect(vaultPage.locator('[data-files]')).toContainText('Primary Password Export');
   await expect(vaultPage.locator('[data-files]')).toContainText('Open with KeePassXC');
 

@@ -115,8 +115,6 @@ Notes:
 - Shamir shares must include the `id: value` prefix, for example `2: ...`.
 - AAD metadata must match exactly; changed metadata causes decryption failure.
 
-Before pushing to `main`, run the full `npm run test:e2e` suite.
-
 ### Fast crypto for tests
 
 Use a low-cost Argon2 configuration in dev/test runs:
