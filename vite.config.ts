@@ -12,6 +12,7 @@ const replaceCsp = (html: string, content: string) =>
   );
 
 export default defineConfig(({ command }) => ({
+  root: 'src',
   base: command === 'build' ? './' : '/',
   assetsInclude: ['**/*.wasm', '**/*.wasm?inline'],
   plugins: [
@@ -24,7 +25,7 @@ export default defineConfig(({ command }) => ({
     }
   ],
   build: {
-    outDir: 'dist',
+    outDir: '../dist',
     emptyOutDir: true,
     modulePreload: {
       polyfill: false

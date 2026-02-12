@@ -11,7 +11,7 @@ The app **must work** when served from:
 To avoid breaking this URL:
 
 - **Do not introduce absolute `/` asset URLs** in production output.
-- Any changes to `vite.config.ts`, `index.html`, or build scripts **must preserve**
+- Any changes to `vite.config.ts`, `src/index*.html`, or build scripts **must preserve**
   asset paths that resolve under `/inheritable-box-seeds/`.
 - If you change the Vite `base` value, verify that assets load correctly
   from the GitHub Pages path above.
@@ -36,6 +36,6 @@ To avoid breaking this URL:
 - If a seed has only one path, keep `Remove` disabled and show an immediate tooltip explaining why.
 - Validation timing: do not show red field errors immediately when entering a step. Arm on navigation attempt; once armed, clear errors immediately when inputs are fixed.
 - In the vault page, render derived addresses as a compact table. Do not use per-address card wrappers or extra `Index N` wording.
-- When `src/vault/runtime.ts` changes, regenerate and commit `src/vault/runtime.bundle.js` to keep runtime/template behavior in sync.
+- When `src/vault/runtime.password.ts`, `src/vault/runtime.shamir.ts`, or `src/vault/runtime.app.ts` changes, regenerate and commit `src/vault/runtime.password.bundle.js` and `src/vault/runtime.shamir.bundle.js` to keep runtime/template behavior in sync.
 - Vault UI changes should match creator style language (tokens, spacing, hierarchy). Use the frontend skill guidance for visual polish work.
 - Maintain e2e coverage for Shamir prepare/gating behavior, non-flashing `k/n` edits, disabled single-path remove tooltip, and derived-table rendering.

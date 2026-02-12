@@ -2950,14 +2950,6 @@ const buildCreatorHeader = () => {
   const actions = el('div', { className: 'creator__header-actions' });
   actions.appendChild(
     el('button', {
-      className: state.view === 'landing' ? 'primary' : 'ghost',
-      dataset: { viewSwitch: 'landing' },
-      attrs: { type: 'button' },
-      text: 'Landing'
-    })
-  );
-  actions.appendChild(
-    el('button', {
       className: state.view === 'wizard' ? 'primary' : 'ghost',
       dataset: { viewSwitch: 'wizard' },
       attrs: { type: 'button' },
@@ -3048,7 +3040,7 @@ const render = () => {
   root.querySelectorAll<HTMLButtonElement>('[data-view-switch]').forEach((button) => {
     button.addEventListener('click', () => {
       const targetView = button.dataset.viewSwitch;
-      if (targetView === 'landing' || targetView === 'wizard' || targetView === 'faq') {
+      if (targetView === 'wizard' || targetView === 'faq') {
         setCreatorView(targetView);
       }
     });

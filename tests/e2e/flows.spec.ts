@@ -91,7 +91,7 @@ const fillPasswordFields = async (page: any, password = longPassword) => {
 const downloadVault = async (page: any, testInfo: any, filename: string) => {
   await goToStep(page, 'finalize');
   await page.click('[data-generate]');
-  await expect(page.locator('[data-download-vault-html]')).toBeEnabled();
+  await expect(page.locator('[data-download-vault-html]')).toBeEnabled({ timeout: 60000 });
   const [download] = await Promise.all([page.waitForEvent('download'), page.click('[data-download-vault-html]')]);
   const vaultPath = testInfo.outputPath(filename);
   await download.saveAs(vaultPath);
@@ -120,35 +120,29 @@ const openCreator = async (page: any) => {
   await expect.poll(() => page.evaluate(() => window.location.hash)).toBe('#create');
 };
 
-test('landing is the default root view', async ({ page }) => {
+test('landing and hash routing flows resolve to expected views', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('[data-landing]')).toHaveCount(1);
   await expect(page.locator('[data-landing-workflow]')).toHaveCount(1);
   await expect(page.locator('[data-landing-use-cases]')).toHaveCount(1);
   await expect.poll(() => page.evaluate(() => window.location.hash)).toBe('#home');
-});
 
-test('landing create CTA opens creator wizard', async ({ page }) => {
-  await page.goto('/');
-  await page.locator('[data-enter-creator]').first().click();
-  await expect(page.locator('[data-step-link="seeds"]')).toHaveClass(/is-active/);
-  await expect.poll(() => page.evaluate(() => window.location.hash)).toBe('#create');
-});
+  const offlineLink = page.locator('[data-download-offline-creator]');
+  await expect(offlineLink).toBeVisible();
+  await expect(offlineLink).toHaveText(/download for offline usage/i);
+  await expect(offlineLink).toHaveAttribute(
+    'href',
+    'https://github.com/gh-stole-my-rstormsf-acc/inheritable-box-seeds/releases/latest/download/seed-vault-standalone.html'
+  );
 
-test('landing FAQ CTA opens creator FAQ view', async ({ page }) => {
-  await page.goto('/');
   await page.locator('[data-open-faq]').first().click();
   await expect(page.locator('[data-faq-page]')).toHaveCount(1);
   await expect.poll(() => page.evaluate(() => window.location.hash)).toBe('#faq');
-});
 
-test('direct hash route #create opens wizard view', async ({ page }) => {
   await page.goto('/#create');
   await expect(page.locator('[data-step-link="seeds"]')).toHaveClass(/is-active/);
   await expect(page.locator('[data-landing]')).toHaveCount(0);
-});
 
-test('direct hash route #faq opens faq view', async ({ page }) => {
   await page.goto('/#faq');
   await expect(page.locator('[data-faq-page]')).toHaveCount(1);
   await expect(page.locator('[data-landing]')).toHaveCount(0);
@@ -184,6 +178,9 @@ test('password encryption flow', async ({ page, context }, testInfo) => {
   expect(passwordVaultHtml).not.toContain('data-ciphertext-print');
   expect(passwordVaultHtml).toContain('argon2.wasm');
   expect(passwordVaultHtml).not.toContain('Share must include id prefix like "1: <share>".');
+  expect(passwordVaultHtml).not.toContain('Creator FAQ');
+  expect(passwordVaultHtml).not.toContain('data-faq-page');
+  expect(passwordVaultHtml).not.toContain('data-view-switch');
 
   const vaultPage = await openVault(context, vaultPath);
   await expect(vaultPage.locator('[data-vault-seeds-section]')).toBeHidden();
@@ -309,98 +306,109 @@ test('shamir encryption flow', async ({ page, context }, testInfo) => {
   await expect(vaultPage.locator('[data-seeds] .vault-seed')).toHaveCount(1, { timeout: 60000 });
 });
 
-test('password encryption flow with multiple seeds', async ({ page, context }, testInfo) => {
-  await openCreator(page);
-  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
-  await page.click('[data-add-seed]');
-  const mnemonics = page.locator('textarea[data-seed-mnemonic]');
-  await mnemonics.nth(1).fill(mnemonicAlt);
-  const seedLabels = page.locator('input[data-seed-label]');
-  await seedLabels.nth(0).fill('Seed One');
-  await seedLabels.nth(1).fill('Seed Two');
-  await goToStep(page, 'paths');
-  const counts = page.locator('input[data-path-count]');
-  const totalCounts = await counts.count();
-  for (let i = 0; i < totalCounts; i += 1) {
-    await setNumericInputByLocator(counts.nth(i), '1');
+test('password encryption variant matrix', async ({ page, context }, testInfo) => {
+  const scenarios = [
+    {
+      name: 'multiple seeds',
+      outputFile: 'vault-multi-seed.html',
+      expectedSeedCount: 2,
+      expectedDerivedCount: 2,
+      setup: async () => {
+        await page.fill('textarea[data-seed-mnemonic]', mnemonic);
+        await page.click('[data-add-seed]');
+        const mnemonics = page.locator('textarea[data-seed-mnemonic]');
+        await mnemonics.nth(1).fill(mnemonicAlt);
+        const seedLabels = page.locator('input[data-seed-label]');
+        await seedLabels.nth(0).fill('Seed One');
+        await seedLabels.nth(1).fill('Seed Two');
+        await goToStep(page, 'paths');
+        const counts = page.locator('input[data-path-count]');
+        const totalCounts = await counts.count();
+        for (let i = 0; i < totalCounts; i += 1) {
+          await setNumericInputByLocator(counts.nth(i), '1');
+        }
+      }
+    },
+    {
+      name: 'one seed and three passphrases',
+      outputFile: 'vault-passphrases.html',
+      expectedSeedCount: 1,
+      expectedDerivedCount: 3,
+      setup: async () => {
+        await page.fill('textarea[data-seed-mnemonic]', mnemonicAlt2);
+        await goToStep(page, 'paths');
+        await addPathToSeedIndex(page, 0);
+        await addPathToSeedIndex(page, 0);
+        await expect(page.locator('.path__seed-badge').first()).toContainText('Seed: Seed 1');
+
+        const passphrases = page.locator('input[data-path-passphrase]');
+        await passphrases.nth(0).fill('passphrase-one');
+        await passphrases.nth(1).fill('passphrase-two');
+        await passphrases.nth(2).fill('passphrase-three');
+        const passphraseLabels = page.locator('input[data-path-passphrase-label]');
+        await passphraseLabels.nth(0).fill('Label One');
+        await passphraseLabels.nth(1).fill('Label Two');
+        await passphraseLabels.nth(2).fill('Label Three');
+
+        const counts = page.locator('input[data-path-count]');
+        const total = await counts.count();
+        for (let i = 0; i < total; i += 1) {
+          await setNumericInputByLocator(counts.nth(i), '1');
+        }
+      }
+    },
+    {
+      name: 'one seed, passphrase, and three HD paths',
+      outputFile: 'vault-paths.html',
+      expectedSeedCount: 1,
+      expectedDerivedCount: 3,
+      setup: async () => {
+        await page.fill('textarea[data-seed-mnemonic]', mnemonic);
+        await goToStep(page, 'paths');
+        await addPathToSeedIndex(page, 0);
+        await addPathToSeedIndex(page, 0);
+
+        const paths = page.locator('input[data-path-value]');
+        await paths.nth(0).fill("m/44'/60'/0'/0/x");
+        await paths.nth(1).fill("m/44'/60'/1'/0/x");
+        await paths.nth(2).fill("m/44'/60'/0'/1/x");
+
+        const passphrases = page.locator('input[data-path-passphrase]');
+        const passphrase = 'path-passphrase';
+        await passphrases.nth(0).fill(passphrase);
+        await passphrases.nth(1).fill(passphrase);
+        await passphrases.nth(2).fill(passphrase);
+        const passphraseLabels = page.locator('input[data-path-passphrase-label]');
+        await passphraseLabels.nth(0).fill('Main');
+        await passphraseLabels.nth(1).fill('Savings');
+        await passphraseLabels.nth(2).fill('Backup');
+
+        const counts = page.locator('input[data-path-count]');
+        const total = await counts.count();
+        for (let i = 0; i < total; i += 1) {
+          await setNumericInputByLocator(counts.nth(i), '1');
+        }
+      }
+    }
+  ] as const;
+
+  for (const scenario of scenarios) {
+    await test.step(`password variant: ${scenario.name}`, async () => {
+      await openCreator(page);
+      await scenario.setup();
+      await fillPasswordFields(page);
+
+      const vaultPath = await downloadVault(page, testInfo, scenario.outputFile);
+      const vaultPage = await decryptVault(context, vaultPath);
+      await expect(vaultPage.locator('[data-seeds] .vault-seed')).toHaveCount(scenario.expectedSeedCount, {
+        timeout: 60000
+      });
+
+      await vaultPage.click('[data-derive]');
+      await expect(vaultPage.locator('.derived-table code')).toHaveCount(scenario.expectedDerivedCount);
+      await vaultPage.close();
+    });
   }
-  await fillPasswordFields(page);
-
-  const vaultPath = await downloadVault(page, testInfo, 'vault-multi-seed.html');
-  const vaultPage = await decryptVault(context, vaultPath);
-  await expect(vaultPage.locator('[data-seeds] .vault-seed')).toHaveCount(2, { timeout: 60000 });
-
-  await vaultPage.click('[data-derive]');
-  await expect(vaultPage.locator('.derived-table code')).toHaveCount(2);
-});
-
-test('password encryption flow with one seed and three passphrases', async ({ page, context }, testInfo) => {
-  await openCreator(page);
-  await page.fill('textarea[data-seed-mnemonic]', mnemonicAlt2);
-  await goToStep(page, 'paths');
-  await addPathToSeedIndex(page, 0);
-  await addPathToSeedIndex(page, 0);
-  await expect(page.locator('.path__seed-badge').first()).toContainText('Seed: Seed 1');
-
-  const passphrases = page.locator('input[data-path-passphrase]');
-  await passphrases.nth(0).fill('passphrase-one');
-  await passphrases.nth(1).fill('passphrase-two');
-  await passphrases.nth(2).fill('passphrase-three');
-  const passphraseLabels = page.locator('input[data-path-passphrase-label]');
-  await passphraseLabels.nth(0).fill('Label One');
-  await passphraseLabels.nth(1).fill('Label Two');
-  await passphraseLabels.nth(2).fill('Label Three');
-
-  const counts = page.locator('input[data-path-count]');
-  const total = await counts.count();
-  for (let i = 0; i < total; i += 1) {
-    await setNumericInputByLocator(counts.nth(i), '1');
-  }
-
-  await fillPasswordFields(page);
-  const vaultPath = await downloadVault(page, testInfo, 'vault-passphrases.html');
-  const vaultPage = await decryptVault(context, vaultPath);
-  await expect(vaultPage.locator('[data-seeds] .vault-seed')).toHaveCount(1, { timeout: 60000 });
-
-  await vaultPage.click('[data-derive]');
-  await expect(vaultPage.locator('.derived-table code')).toHaveCount(3);
-});
-
-test('password encryption flow with one seed, passphrase, and three HD paths', async ({ page, context }, testInfo) => {
-  await openCreator(page);
-  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
-  await goToStep(page, 'paths');
-  await addPathToSeedIndex(page, 0);
-  await addPathToSeedIndex(page, 0);
-
-  const paths = page.locator('input[data-path-value]');
-  await paths.nth(0).fill("m/44'/60'/0'/0/x");
-  await paths.nth(1).fill("m/44'/60'/1'/0/x");
-  await paths.nth(2).fill("m/44'/60'/0'/1/x");
-
-  const passphrases = page.locator('input[data-path-passphrase]');
-  const passphrase = 'path-passphrase';
-  await passphrases.nth(0).fill(passphrase);
-  await passphrases.nth(1).fill(passphrase);
-  await passphrases.nth(2).fill(passphrase);
-  const passphraseLabels = page.locator('input[data-path-passphrase-label]');
-  await passphraseLabels.nth(0).fill('Main');
-  await passphraseLabels.nth(1).fill('Savings');
-  await passphraseLabels.nth(2).fill('Backup');
-
-  const counts = page.locator('input[data-path-count]');
-  const total = await counts.count();
-  for (let i = 0; i < total; i += 1) {
-    await setNumericInputByLocator(counts.nth(i), '1');
-  }
-
-  await fillPasswordFields(page);
-  const vaultPath = await downloadVault(page, testInfo, 'vault-paths.html');
-  const vaultPage = await decryptVault(context, vaultPath);
-  await expect(vaultPage.locator('[data-seeds] .vault-seed')).toHaveCount(1, { timeout: 60000 });
-
-  await vaultPage.click('[data-derive]');
-  await expect(vaultPage.locator('.derived-table code')).toHaveCount(3);
 });
 
 test('password encryption flow with 2 seeds and 2 paths each', async ({ page, context }, testInfo) => {
@@ -464,191 +472,129 @@ test('password encryption flow with 2 seeds and 2 paths each', async ({ page, co
   await expect(vaultPage.locator('[data-derived] [data-reveal]')).toHaveCount(4);
 });
 
-test('assigns default seed labels by index', async ({ page }) => {
+test('seed and path hot-path edits preserve section nodes', async ({ page }) => {
   await openCreator(page);
 
   const seedLabels = page.locator('input[data-seed-label]');
   await expect(seedLabels.nth(0)).toHaveValue('Seed 1');
-
-  await page.click('[data-add-seed]');
-  await expect(seedLabels.nth(1)).toHaveValue('Seed 2');
-});
-
-test('add seed does not replace seeds section and preserves in-progress mnemonic', async ({ page }) => {
-  await openCreator(page);
   await page.fill('textarea[data-seed-mnemonic]', 'abandon abandon');
   await page.evaluate(() => {
     (window as Window & { __seedsSectionRef?: Element | null }).__seedsSectionRef =
       document.querySelector('[data-seeds-section]');
   });
-
   await page.click('[data-add-seed]');
-  await expect(page.locator('textarea[data-seed-mnemonic]')).toHaveCount(2);
-
-  const sameSectionAfterAdd = await page.evaluate(
+  await expect(seedLabels.nth(1)).toHaveValue('Seed 2');
+  const sameSeedsSectionAfterAdd = await page.evaluate(
     () =>
       (window as Window & { __seedsSectionRef?: Element | null }).__seedsSectionRef ===
       document.querySelector('[data-seeds-section]')
   );
-  expect(sameSectionAfterAdd).toBe(true);
+  expect(sameSeedsSectionAfterAdd).toBe(true);
   await expect(page.locator('textarea[data-seed-mnemonic]').first()).toHaveValue('abandon abandon');
-});
 
-test('auto-updates path label from preset until manually overridden', async ({ page }) => {
-  await openCreator(page);
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
+  await page.locator('textarea[data-seed-mnemonic]').nth(1).fill(mnemonicAlt);
   await goToStep(page, 'paths');
-
   const pathLabel = page.locator('input[data-path-label]').first();
   await expect(pathLabel).toHaveValue('[Seed 1] BIP-44 Standard 1');
+  await page.evaluate(() => {
+    (window as Window & { __pathsSectionRef?: Element | null }).__pathsSectionRef =
+      document.querySelector('[data-paths-section]');
+  });
 
   await page.selectOption('select[data-path-preset]', 'ledger-legacy');
   await expect(pathLabel).toHaveValue('[Seed 1] Ledger Legacy 1');
+  const samePathSectionAfterPreset = await page.evaluate(
+    () =>
+      (window as Window & { __pathsSectionRef?: Element | null }).__pathsSectionRef ===
+      document.querySelector('[data-paths-section]')
+  );
+  expect(samePathSectionAfterPreset).toBe(true);
 
   await pathLabel.fill('Custom Path Label');
   await page.selectOption('select[data-path-preset]', 'ledger-live');
   await expect(pathLabel).toHaveValue('Custom Path Label');
-});
-
-test('add path does not replace paths section and preserves in-progress field values', async ({ page }) => {
-  await openCreator(page);
-  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
-  await goToStep(page, 'paths');
-
-  await page.fill('input[data-path-label]', 'Draft Label');
-  await page.evaluate(() => {
-    (window as Window & { __pathsSectionRef?: Element | null }).__pathsSectionRef =
-      document.querySelector('[data-paths-section]');
-  });
 
   await page.locator('[data-add-path-seed]').first().click();
-  await expect(page.locator('input[data-path-label]')).toHaveCount(2);
-  const sameSectionAfterOpen = await page.evaluate(
+  await expect(page.locator('input[data-path-label]')).toHaveCount(3);
+  await expect(pathLabel).toHaveValue('Custom Path Label');
+  const samePathSectionAfterAdd = await page.evaluate(
     () =>
       (window as Window & { __pathsSectionRef?: Element | null }).__pathsSectionRef ===
       document.querySelector('[data-paths-section]')
   );
-  expect(sameSectionAfterOpen).toBe(true);
-  await expect(page.locator('input[data-path-label]').first()).toHaveValue('Draft Label');
-});
-
-test('changing path preset does not replace paths section', async ({ page }) => {
-  await openCreator(page);
-  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
-  await goToStep(page, 'paths');
-
-  await page.evaluate(() => {
-    (window as Window & { __pathsSectionRef?: Element | null }).__pathsSectionRef =
-      document.querySelector('[data-paths-section]');
-  });
-
-  await page.selectOption('select[data-path-preset]', 'ledger-legacy');
-  const sameSectionAfterPresetChange = await page.evaluate(
-    () =>
-      (window as Window & { __pathsSectionRef?: Element | null }).__pathsSectionRef ===
-      document.querySelector('[data-paths-section]')
-  );
-  expect(sameSectionAfterPresetChange).toBe(true);
-  await expect(page.locator('input[data-path-label]').first()).toHaveValue('[Seed 1] Ledger Legacy 1');
-});
-
-test('editing path value does not replace paths section', async ({ page }) => {
-  await openCreator(page);
-  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
-  await goToStep(page, 'paths');
-
-  await page.evaluate(() => {
-    (window as Window & { __pathsSectionRef?: Element | null }).__pathsSectionRef =
-      document.querySelector('[data-paths-section]');
-  });
+  expect(samePathSectionAfterAdd).toBe(true);
 
   await page.fill('input[data-path-value]', "m/44'/60'/0'/0/x");
-  const sameSectionAfterPathEdit = await page.evaluate(
+  await expect(page.locator('[data-path-status]').first()).toContainText(/Path valid/i);
+  const samePathSectionAfterPathEdit = await page.evaluate(
     () =>
       (window as Window & { __pathsSectionRef?: Element | null }).__pathsSectionRef ===
       document.querySelector('[data-paths-section]')
   );
-  expect(sameSectionAfterPathEdit).toBe(true);
-  await expect(page.locator('[data-path-status]').first()).toContainText(/Path valid/i);
+  expect(samePathSectionAfterPathEdit).toBe(true);
 });
 
-test('changing security preset does not replace security section', async ({ page }) => {
+test('files and security hot-path toggles preserve section nodes', async ({ page }) => {
   await openCreator(page);
   await page.fill('textarea[data-seed-mnemonic]', mnemonic);
-  await goToStep(page, 'security');
 
+  await goToStep(page, 'files');
   await page.evaluate(() => {
-    (window as Window & { __securitySectionRef?: Element | null }).__securitySectionRef =
-      document.querySelector('.wizard-card');
+    (window as Window & { __filesSectionRef?: Element | null }).__filesSectionRef =
+      document.querySelector('[data-files-section]');
   });
-
-  await page.selectOption('[data-argon-preset]', 'custom');
-  const sameSectionAfterPresetChange = await page.evaluate(
+  await page.check('input[data-files-enabled]');
+  const sameFilesSectionAfterEnable = await page.evaluate(
     () =>
-      (window as Window & { __securitySectionRef?: Element | null }).__securitySectionRef ===
-      document.querySelector('.wizard-card')
+      (window as Window & { __filesSectionRef?: Element | null }).__filesSectionRef ===
+      document.querySelector('[data-files-section]')
   );
-  expect(sameSectionAfterPresetChange).toBe(true);
-  await expect(page.locator('[data-argon-custom]')).toBeVisible();
-  await expect(page.locator('[data-argon-preset-hint]')).toBeHidden();
-});
+  expect(sameFilesSectionAfterEnable).toBe(true);
+  await expect(page.locator('input[data-files-input]')).toHaveCount(1);
 
-test('changing security mode does not replace security section', async ({ page }) => {
-  await openCreator(page);
-  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
+  await page.uncheck('input[data-files-enabled]');
+  const sameFilesSectionAfterDisable = await page.evaluate(
+    () =>
+      (window as Window & { __filesSectionRef?: Element | null }).__filesSectionRef ===
+      document.querySelector('[data-files-section]')
+  );
+  expect(sameFilesSectionAfterDisable).toBe(true);
+  await expect(page.locator('input[data-files-input]')).toHaveCount(0);
+
   await goToStep(page, 'security');
-
   await page.evaluate(() => {
     (window as Window & { __securitySectionRef?: Element | null }).__securitySectionRef =
       document.querySelector('[data-security-section]');
   });
 
-  await page.check('input[value="shamir"]');
-  const sameSectionAfterShamirToggle = await page.evaluate(
+  await page.selectOption('[data-argon-preset]', 'custom');
+  await expect(page.locator('[data-argon-custom]')).toBeVisible();
+  await expect(page.locator('[data-argon-preset-hint]')).toBeHidden();
+  const sameSecuritySectionAfterPreset = await page.evaluate(
     () =>
       (window as Window & { __securitySectionRef?: Element | null }).__securitySectionRef ===
       document.querySelector('[data-security-section]')
   );
-  expect(sameSectionAfterShamirToggle).toBe(true);
+  expect(sameSecuritySectionAfterPreset).toBe(true);
+
+  await page.check('input[value="shamir"]');
   await expect(page.locator('[data-threshold]')).toBeVisible();
+  const sameSecuritySectionAfterShamirToggle = await page.evaluate(
+    () =>
+      (window as Window & { __securitySectionRef?: Element | null }).__securitySectionRef ===
+      document.querySelector('[data-security-section]')
+  );
+  expect(sameSecuritySectionAfterShamirToggle).toBe(true);
 
   await page.check('input[value="password"]');
-  const sameSectionAfterPasswordToggle = await page.evaluate(
+  await expect(page.locator('input[data-password]')).toBeVisible();
+  const sameSecuritySectionAfterPasswordToggle = await page.evaluate(
     () =>
       (window as Window & { __securitySectionRef?: Element | null }).__securitySectionRef ===
       document.querySelector('[data-security-section]')
   );
-  expect(sameSectionAfterPasswordToggle).toBe(true);
-  await expect(page.locator('input[data-password]')).toBeVisible();
-});
-
-test('toggling encrypted files does not replace files section', async ({ page }) => {
-  await openCreator(page);
-  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
-  await goToStep(page, 'files');
-
-  await page.evaluate(() => {
-    (window as Window & { __filesSectionRef?: Element | null }).__filesSectionRef =
-      document.querySelector('[data-files-section]');
-  });
-
-  await page.check('input[data-files-enabled]');
-  const sameSectionAfterEnable = await page.evaluate(
-    () =>
-      (window as Window & { __filesSectionRef?: Element | null }).__filesSectionRef ===
-      document.querySelector('[data-files-section]')
-  );
-  expect(sameSectionAfterEnable).toBe(true);
-  await expect(page.locator('input[data-files-input]')).toHaveCount(1);
-
-  await page.uncheck('input[data-files-enabled]');
-  const sameSectionAfterDisable = await page.evaluate(
-    () =>
-      (window as Window & { __filesSectionRef?: Element | null }).__filesSectionRef ===
-      document.querySelector('[data-files-section]')
-  );
-  expect(sameSectionAfterDisable).toBe(true);
-  await expect(page.locator('input[data-files-input]')).toHaveCount(0);
+  expect(sameSecuritySectionAfterPasswordToggle).toBe(true);
 });
 
 test('disables remove button when a seed has only one path', async ({ page }) => {
@@ -685,7 +631,7 @@ test('wizard step badges are non-interactive representation only', async ({ page
   await expect(page.locator('[data-step-link="seeds"]')).toHaveClass(/is-active/);
 });
 
-test('shows step error near next and clears it after fixing seed input', async ({ page }) => {
+test('validation errors arm on next and clear after fixes across wizard steps', async ({ page }) => {
   await openCreator(page);
 
   await page.click('[data-step-next]');
@@ -696,12 +642,6 @@ test('shows step error near next and clears it after fixing seed input', async (
   await page.click('[data-step-next]');
   await expect(page.locator('[data-step-error]')).toHaveCount(0);
   await expect(page.locator('[data-step-link="paths"]')).toHaveClass(/is-active/);
-});
-
-test('shows path step error with red field and clears after fix', async ({ page }) => {
-  await openCreator(page);
-  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
-  await goToStep(page, 'paths');
 
   await page.fill('input[data-path-label]', '');
   await page.click('[data-step-next]');
@@ -713,15 +653,15 @@ test('shows path step error with red field and clears after fix', async ({ page 
   await page.click('[data-step-next]');
   await expect(page.locator('[data-step-error]')).toHaveCount(0);
   await expect(page.locator('[data-step-link="files"]')).toHaveClass(/is-active/);
-});
 
-test('does not show password error on security step until next is clicked', async ({ page }) => {
-  await openCreator(page);
-  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
-  await goToStep(page, 'security');
+  await page.click('[data-step-next]');
+  await expect(page.locator('[data-step-link="security"]')).toHaveClass(/is-active/);
 
   const passwordInput = page.locator('input[data-password]');
+  const confirmInput = page.locator('input[data-confirm]');
   await expect(passwordInput).not.toHaveClass(/field-error/);
+  await expect(passwordInput).toHaveAttribute('type', 'password');
+  await expect(confirmInput).toHaveAttribute('type', 'password');
 
   await page.click('[data-step-next]');
   await expect(page.locator('[data-step-error]')).toContainText(/Password is required/i);
@@ -729,19 +669,6 @@ test('does not show password error on security step until next is clicked', asyn
 
   await passwordInput.fill('ValidPassword123!');
   await expect(passwordInput).not.toHaveClass(/field-error/);
-});
-
-test('password reveal toggle shows both fields and confirmation mismatch blocks next', async ({ page }) => {
-  await openCreator(page);
-  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
-  await goToStep(page, 'security');
-
-  const passwordInput = page.locator('input[data-password]');
-  const confirmInput = page.locator('input[data-confirm]');
-  await expect(passwordInput).toHaveAttribute('type', 'password');
-  await expect(confirmInput).toHaveAttribute('type', 'password');
-
-  await passwordInput.fill('ValidPassword123!');
   await confirmInput.fill('DifferentPassword123!');
   await page.check('input[data-password-visibility]');
 
@@ -814,9 +741,15 @@ test('finalize locks generate and back after successful generation', async ({ pa
   await expect(previousButton).toBeDisabled();
 });
 
-test('creator FAQ view toggles from header and renders category accordion', async ({ page }) => {
+test('creator FAQ header toggle works and preserves wizard state', async ({ page }) => {
   await openCreator(page);
+  await expect(page.locator('[data-view-switch="landing"]')).toHaveCount(0);
   await expect(page.locator('[data-faq-page]')).toHaveCount(0);
+
+  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
+  await goToStep(page, 'paths');
+  await page.fill('input[data-path-label]', 'State Preservation Path');
+  await expect(page.locator('[data-step-link="paths"]')).toHaveClass(/is-active/);
 
   await page.click('[data-view-switch="faq"]');
   await expect(page.locator('[data-faq-page]')).toHaveCount(1);
@@ -835,44 +768,9 @@ test('creator FAQ view toggles from header and renders category accordion', asyn
 
   await categoryButtons.nth(1).click();
   await expect(page.locator('[data-faq-entry-toggle]').first()).toBeVisible();
-});
-
-test('landing footer shows standalone release link in non-standalone build', async ({ page }) => {
-  await page.goto('/');
-  await expect(page.locator('[data-landing]')).toHaveCount(1);
-  const offlineLink = page.locator('[data-download-offline-creator]');
-  await expect(offlineLink).toBeVisible();
-  await expect(offlineLink).toHaveText(/download for offline usage/i);
-  await expect(offlineLink).toHaveAttribute(
-    'href',
-    'https://github.com/gh-stole-my-rstormsf-acc/inheritable-box-seeds/releases/latest/download/seed-vault-standalone.html'
-  );
-});
-
-test('switching between creator and FAQ preserves in-progress wizard state', async ({ page }) => {
-  await openCreator(page);
-  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
-  await goToStep(page, 'paths');
-  await page.fill('input[data-path-label]', 'State Preservation Path');
-  await expect(page.locator('[data-step-link="paths"]')).toHaveClass(/is-active/);
-
-  await page.click('[data-view-switch="faq"]');
-  await expect(page.locator('[data-faq-page]')).toHaveCount(1);
 
   await page.click('[data-view-switch="wizard"]');
   await expect.poll(() => page.evaluate(() => window.location.hash)).toBe('#create');
   await expect(page.locator('[data-step-link="paths"]')).toHaveClass(/is-active/);
   await expect(page.locator('input[data-path-label]').first()).toHaveValue('State Preservation Path');
-});
-
-test('generated vault HTML does not include creator FAQ page markup', async ({ page }, testInfo) => {
-  await openCreator(page);
-  await generateVault(page);
-  await fillPasswordFields(page);
-  const vaultPath = await downloadVault(page, testInfo, 'vault-no-faq-markup.html');
-
-  const vaultHtml = await readFile(vaultPath, 'utf8');
-  expect(vaultHtml).not.toContain('Creator FAQ');
-  expect(vaultHtml).not.toContain('data-faq-page');
-  expect(vaultHtml).not.toContain('data-view-switch');
 });

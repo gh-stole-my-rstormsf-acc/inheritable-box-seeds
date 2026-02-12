@@ -143,18 +143,19 @@ Managing Ethereum seed phrases across multiple HD derivation paths (BIP-44, Ledg
 seed-vault/
 ├── src/
 │   ├── creator/           # Vault creation app
-│   │   ├── components/    # Web Components
 │   │   ├── crypto/        # Encryption logic
 │   │   ├── derivation/    # HD path derivation
-│   │   ├── shamir/        # Shamir secret sharing
 │   │   ├── validation/    # Input validation
-│   │   └── main.ts        # Entry point
+│   │   ├── main.ts        # Pages entry logic
+│   │   └── main.standalone.ts  # Standalone entry logic
 │   ├── vault/             # Embedded vault template
-│   │   ├── decrypt.ts     # Decryption logic
-│   │   ├── display.ts     # Secret display
-│   │   ├── derive.ts      # Address derivation
-│   │   ├── export.ts      # CSV export
-│   │   └── template.html  # Vault HTML shell
+│   │   ├── runtime.app.ts # Shared runtime UI logic
+│   │   ├── runtime.password.ts
+│   │   ├── runtime.shamir.ts
+│   │   ├── runtime.password.bundle.js
+│   │   ├── runtime.shamir.bundle.js
+│   │   ├── template.ts
+│   │   └── template.html
 │   └── shared/            # Shared utilities
 │       ├── constants.ts
 │       ├── types.ts
@@ -162,9 +163,8 @@ seed-vault/
 ├── tests/
 │   ├── unit/              # Vitest unit tests
 │   └── e2e/               # Playwright E2E tests
-├── dist/                  # Build output
-│   ├── creator/           # Creator app (deployable)
-│   └── vault-template.js  # Compiled vault code for embedding
+├── dist/                  # Build output artifact
+│   └── index.html         # Pages build or standalone artifact (depending on command)
 ├── vite.config.ts
 ├── tsconfig.json
 ├── package.json

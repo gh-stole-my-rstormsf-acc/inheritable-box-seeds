@@ -14,6 +14,7 @@ const replaceCsp = (html: string, content: string) =>
   );
 
 export default defineConfig(({ command }) => ({
+  root: 'src',
   base: command === 'build' ? './' : '/',
   assetsInclude: ['**/*.wasm', '**/*.wasm?inline'],
   plugins: [
@@ -41,14 +42,14 @@ export default defineConfig(({ command }) => ({
     }
   ],
   build: {
-    outDir: 'dist',
+    outDir: '../dist',
     emptyOutDir: true,
     modulePreload: {
       polyfill: false
     },
     rollupOptions: {
       input: {
-        index: resolve('index.standalone.html')
+        index: resolve('src/index.standalone.html')
       },
       inlineDynamicImports: true,
       output: {
