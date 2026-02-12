@@ -71,6 +71,50 @@ Node roundtrip proof (encrypt/decrypt ciphertext package in both modes):
 npm run test:node:cipher-roundtrip
 ```
 
+### Decrypt from Ciphertext Markdown (`.md`) in Node.js
+
+This repo includes a standalone example script that decrypts the generated
+`seed-vault-cipher-*.md` package using either password mode or Shamir mode.
+
+Run in this repo:
+
+```bash
+node examples/decrypt-cipher-md.mjs --help
+```
+
+Password mode:
+
+```bash
+node examples/decrypt-cipher-md.mjs \
+  --md ./seed-vault-cipher-xxxx.md \
+  --mode password \
+  --password "your-password" \
+  --out ./decrypted.json
+```
+
+Shamir mode:
+
+```bash
+node examples/decrypt-cipher-md.mjs \
+  --md ./seed-vault-cipher-xxxx.md \
+  --mode shamir \
+  --share "1: <share payload>" \
+  --share "2: <share payload>" \
+  --share-format words \
+  --out ./decrypted.json
+```
+
+If you want to run this script outside this repo, install these dependencies:
+
+```bash
+npm install @noble/hashes @noble/post-quantum @noble/curves @noble/ciphers @scure/bip39
+```
+
+Notes:
+- `--mode` must match the markdown's `Encryption mode` field.
+- Shamir shares must include the `id: value` prefix, for example `2: ...`.
+- AAD metadata must match exactly; changed metadata causes decryption failure.
+
 Before pushing to `main`, run the full `npm run test:e2e` suite.
 
 ### Fast crypto for tests
