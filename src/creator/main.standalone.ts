@@ -1037,7 +1037,7 @@ const renderPreviewTable = (addresses: string[]) => {
     const row = el('tr');
     row.appendChild(el('td', { className: 'preview-table__index', text: String(index) }));
     const codeCell = el('td');
-    const code = el('code', { text: address });
+    const code = el('code', { className: 'mono', text: address });
     codeCell.appendChild(code);
     row.appendChild(codeCell);
     tbody.appendChild(row);
@@ -1646,7 +1646,7 @@ const buildPathCard = (seed: SeedForm, path: PathForm, fieldErrors: FieldErrorSt
   );
   pathEl.appendChild(
     el('p', {
-      className: 'path__seed-badge',
+      className: 'path__seed-badge mono',
       dataset: { pathSeedBadge: `${seed.id}:${path.id}` },
       text: `Seed: ${seedName}`
     })
@@ -1683,7 +1683,7 @@ const buildPathCard = (seed: SeedForm, path: PathForm, fieldErrors: FieldErrorSt
   pathEl.appendChild(el('label', { text: 'Derivation Path' }));
   pathEl.appendChild(
     el('input', {
-      className: hasFieldError(fieldErrors, 'pathValue', pathKey) ? 'field-error' : undefined,
+      className: hasFieldError(fieldErrors, 'pathValue', pathKey) ? 'field-error mono' : 'mono',
       type: 'text',
       dataset: { pathValue: `${seed.id}:${path.id}` },
       value: path.path
@@ -1720,7 +1720,7 @@ const buildPathCard = (seed: SeedForm, path: PathForm, fieldErrors: FieldErrorSt
   pathEl.appendChild(el('label', { text: 'Address Count' }));
   pathEl.appendChild(
     el('input', {
-      className: hasFieldError(fieldErrors, 'pathCount', pathKey) ? 'field-error' : undefined,
+      className: hasFieldError(fieldErrors, 'pathCount', pathKey) ? 'field-error mono' : 'mono',
       type: 'number',
       min: '1',
       max: '100',
@@ -2213,8 +2213,8 @@ const buildShamirSharesPanel = (
   shares.forEach((share) => {
     const shareEl = el('div', { className: 'share', dataset: { share: String(share.id) } });
     shareEl.appendChild(el('strong', { text: `Share ${share.id}` }));
-    shareEl.appendChild(el('textarea', { readOnly: true, value: share.words }));
-    shareEl.appendChild(el('textarea', { className: 'hidden', readOnly: true, value: share.hex }));
+    shareEl.appendChild(el('textarea', { className: 'mono', readOnly: true, value: share.words }));
+    shareEl.appendChild(el('textarea', { className: 'hidden mono', readOnly: true, value: share.hex }));
     sharesEl.appendChild(shareEl);
   });
 
