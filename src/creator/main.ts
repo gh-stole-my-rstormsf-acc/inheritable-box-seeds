@@ -735,6 +735,30 @@ const emptyFieldErrors = (): FieldErrorState => ({
   total: false
 });
 
+const collectSecurityFieldErrors = (): FieldErrorState => {
+  const fieldErrors = emptyFieldErrors();
+  if (!state.securityValidationArmed) {
+    return fieldErrors;
+  }
+
+  if (state.encryption.mode === 'password') {
+    if (!state.encryption.password) fieldErrors.password = true;
+    if (state.encryption.password !== state.encryption.confirm) fieldErrors.confirm = true;
+    if (state.encryption.argonPresetId === 'custom' && !validateArgon2Params(state.encryption.argonCustom).valid) {
+      fieldErrors.argonTime = true;
+      fieldErrors.argonMemory = true;
+      fieldErrors.argonParallelism = true;
+    }
+    return fieldErrors;
+  }
+
+  if (state.encryption.threshold < 2 || state.encryption.totalShares < state.encryption.threshold) {
+    fieldErrors.threshold = true;
+    fieldErrors.total = true;
+  }
+  return fieldErrors;
+};
+
 const collectFieldErrors = (): FieldErrorState => {
   const fieldErrors = emptyFieldErrors();
   const labelCounts = new Map<string, number>();
@@ -1567,15 +1591,15 @@ const buildFilesSection = () => {
         className: 'helper',
         text: `Max ${MAX_VAULT_FILE_COUNT} files. Up to ${formatBytes(MAX_VAULT_TOTAL_FILE_BYTES)} total stays self-contained in the HTML; larger bundles are exported as separate encrypted files.`
       }),
-      el('button', {
-        className: 'ghost tooltip-button',
-        text: 'Why 10 MB?',
+      el('span', {
+        className: 'tooltip-anchor tooltip-label',
+        text: '10 MB limit',
         dataset: {
           fileLimitTooltip: '',
           tooltip: FILE_ATTACHMENTS_LIMIT_TOOLTIP
         },
         attrs: {
-          type: 'button',
+          tabindex: '0',
           'aria-label': FILE_ATTACHMENTS_LIMIT_TOOLTIP
         }
       })
@@ -2039,7 +2063,7 @@ const syncPathPresetUI = (seed: SeedForm, path: PathForm) => {
 
 const syncSecurityFieldErrorUI = () => {
   if (state.currentStep !== 'security') return;
-  const fieldErrors = collectFieldErrors();
+  const fieldErrors = collectSecurityFieldErrors();
   const passwordInput = document.querySelector<HTMLInputElement>('[data-password]');
   if (passwordInput) passwordInput.classList.toggle('field-error', hasFieldError(fieldErrors, 'password'));
   const confirmInput = document.querySelector<HTMLInputElement>('[data-confirm]');
@@ -2056,6 +2080,12 @@ const syncSecurityFieldErrorUI = () => {
   if (thresholdInput) thresholdInput.classList.toggle('field-error', hasFieldError(fieldErrors, 'threshold'));
   const totalInput = document.querySelector<HTMLInputElement>('[data-total]');
   if (totalInput) totalInput.classList.toggle('field-error', hasFieldError(fieldErrors, 'total'));
+};
+
+const syncSecurityPasswordStrengthUI = () => {
+  if (state.currentStep !== 'security' || state.encryption.mode !== 'password') return;
+  const strengthEl = document.querySelector<HTMLSpanElement>('[data-strength]');
+  if (strengthEl) strengthEl.textContent = String(passwordStrength(state.encryption.password));
 };
 
 const syncArgonPresetUI = () => {
@@ -2128,8 +2158,7 @@ const bindSecurityFieldListeners = (scope: ParentNode) => {
   scope.querySelector<HTMLInputElement>('[data-password]')?.addEventListener('input', (event) => {
     const value = (event.target as HTMLInputElement).value;
     state.encryption.password = value;
-    const strengthEl = scope.querySelector<HTMLSpanElement>('[data-strength]');
-    if (strengthEl) strengthEl.textContent = String(passwordStrength(value));
+    syncSecurityPasswordStrengthUI();
     syncSecurityFieldErrorUI();
   });
 

@@ -651,6 +651,61 @@ test('files and security hot-path toggles preserve section nodes', async ({ page
       document.querySelector('[data-security-section]')
   );
   expect(sameSecuritySectionAfterPasswordToggle).toBe(true);
+
+  await page.evaluate(() => {
+    (window as Window & {
+      __securitySectionRef?: Element | null;
+      __passwordInputRef?: Element | null;
+      __confirmInputRef?: Element | null;
+    }).__passwordInputRef = document.querySelector('input[data-password]');
+    (window as Window & {
+      __securitySectionRef?: Element | null;
+      __passwordInputRef?: Element | null;
+      __confirmInputRef?: Element | null;
+    }).__confirmInputRef = document.querySelector('input[data-confirm]');
+  });
+
+  await page.type('input[data-password]', 'ValidPassword123!', { delay: 10 });
+  const sameSecurityNodesAfterPasswordTyping = await page.evaluate(
+    () =>
+      (window as Window & {
+        __securitySectionRef?: Element | null;
+        __passwordInputRef?: Element | null;
+        __confirmInputRef?: Element | null;
+      }).__securitySectionRef === document.querySelector('[data-security-section]') &&
+      (window as Window & {
+        __securitySectionRef?: Element | null;
+        __passwordInputRef?: Element | null;
+        __confirmInputRef?: Element | null;
+      }).__passwordInputRef === document.querySelector('input[data-password]') &&
+      (window as Window & {
+        __securitySectionRef?: Element | null;
+        __passwordInputRef?: Element | null;
+        __confirmInputRef?: Element | null;
+      }).__confirmInputRef === document.querySelector('input[data-confirm]')
+  );
+  expect(sameSecurityNodesAfterPasswordTyping).toBe(true);
+
+  await page.type('input[data-confirm]', 'ValidPassword123!', { delay: 10 });
+  const sameSecurityNodesAfterConfirmTyping = await page.evaluate(
+    () =>
+      (window as Window & {
+        __securitySectionRef?: Element | null;
+        __passwordInputRef?: Element | null;
+        __confirmInputRef?: Element | null;
+      }).__securitySectionRef === document.querySelector('[data-security-section]') &&
+      (window as Window & {
+        __securitySectionRef?: Element | null;
+        __passwordInputRef?: Element | null;
+        __confirmInputRef?: Element | null;
+      }).__passwordInputRef === document.querySelector('input[data-password]') &&
+      (window as Window & {
+        __securitySectionRef?: Element | null;
+        __passwordInputRef?: Element | null;
+        __confirmInputRef?: Element | null;
+      }).__confirmInputRef === document.querySelector('input[data-confirm]')
+  );
+  expect(sameSecurityNodesAfterConfirmTyping).toBe(true);
 });
 
 test('disables remove button when a seed has only one path', async ({ page }) => {
