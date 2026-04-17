@@ -379,11 +379,13 @@ button:hover:not(:disabled) {
   color: var(--color-text-muted);
 }
 
-.path__header button[data-tooltip] {
+.path__header button[data-tooltip],
+.tooltip-button[data-tooltip] {
   position: relative;
 }
 
-.path__header button[data-tooltip]::after {
+.path__header button[data-tooltip]::after,
+.tooltip-button[data-tooltip]::after {
   content: attr(data-tooltip);
   position: absolute;
   right: 0;
@@ -406,7 +408,9 @@ button:hover:not(:disabled) {
 }
 
 .path__header button[data-tooltip]:hover::after,
-.path__header button[data-tooltip]:focus-visible::after {
+.path__header button[data-tooltip]:focus-visible::after,
+.tooltip-button[data-tooltip]:hover::after,
+.tooltip-button[data-tooltip]:focus-visible::after {
   opacity: 1;
   visibility: visible;
 }
@@ -747,6 +751,23 @@ button:hover:not(:disabled) {
 .files-toggle-row input {
   width: auto;
   margin-top: 0;
+}
+
+.files-limit-row {
+  margin-top: var(--space-3);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.files-limit-row .helper {
+  margin: 0;
+}
+
+.tooltip-button {
+  margin-top: 0;
+  flex-shrink: 0;
 }
 
 .vault-files-list {

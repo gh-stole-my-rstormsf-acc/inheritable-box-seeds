@@ -93,6 +93,7 @@ export const decryptWithPasswordRuntime = async ({
   } catch {
     throw new Error('Decryption failed. Check your password and try again.');
   } finally {
+    zeroBytes(ciphertext);
     zeroBytes(key);
     zeroBytes(sharedSecret);
   }

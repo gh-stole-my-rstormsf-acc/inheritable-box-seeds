@@ -77,7 +77,7 @@ describe('decrypt-cipher-md example script', () => {
       totalFileBytes: sampleData.files?.reduce((sum, file) => sum + file.size, 0) ?? 0
     });
 
-    const { vault: shamirVault, shares } = encryptWithShamir({
+    const { vault: shamirVault, shares } = await encryptWithShamir({
       data: sampleData,
       threshold: 2,
       totalShares: 3,

@@ -71,6 +71,7 @@ export const decryptWithShamirRuntime = ({ shares, vault }: ShamirRuntimeDecrypt
   } catch {
     throw new Error('Decryption failed. Check your shares and try again.');
   } finally {
+    zeroBytes(ciphertext);
     zeroBytes(masterSeed);
     zeroBytes(sharedSecret);
   }

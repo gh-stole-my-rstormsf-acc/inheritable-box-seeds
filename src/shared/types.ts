@@ -54,14 +54,35 @@ export interface PathConfig {
   deriveCount: number;
 }
 
-export interface VaultFileEntry {
+export interface VaultFileEntryBase {
   label: string;
   fileName: string;
   mimeType: string;
   size: number;
   openHint: string;
+}
+
+export interface InlineVaultFileEntry extends VaultFileEntryBase {
+  storage?: 'inline';
   dataBase64: string;
 }
+
+export interface ExternalVaultFileEntry extends VaultFileEntryBase {
+  storage: 'external';
+  bundleFileName: string;
+  bundleId: string;
+  keyBase64: string;
+  noncePrefixBase64: string;
+  chunkSize: number;
+}
+
+export type VaultFileEntry = InlineVaultFileEntry | ExternalVaultFileEntry;
+
+export const isExternalVaultFileEntry = (value: VaultFileEntry): value is ExternalVaultFileEntry =>
+  value.storage === 'external';
+
+export const isInlineVaultFileEntry = (value: VaultFileEntry): value is InlineVaultFileEntry =>
+  value.storage !== 'external';
 
 export const isPasswordEncryption = (value: unknown): value is PasswordEncryption => {
   if (!value || typeof value !== 'object') return false;

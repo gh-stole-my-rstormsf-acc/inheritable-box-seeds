@@ -1,7 +1,7 @@
 import { ARGON2_PRESETS, ENCRYPTION_ALGORITHM_PASSWORD, ENCRYPTION_ALGORITHM_SHAMIR, VAULT_VERSION } from '../constants';
 import { zeroBytes, randomBytes } from '../utils';
 import { type Vault, type VaultData, type PasswordEncryption, type ShamirEncryption } from '../types';
-import { bytesToBase64, base64ToBytes, bytesToUtf8, utf8ToBytes } from './encoding';
+import { bytesToBase64, bytesToBase64Async, base64ToBytes, bytesToUtf8, utf8ToBytes } from './encoding';
 import { decryptAesGcm, encryptAesGcm } from './aes';
 import { deriveKeyArgon2, deriveKeyArgon2WithSalt, type Argon2Params, type Argon2Result } from './argon2';
 import { decapsulateHybrid, deriveHybridReceiverKeys, encapsulateHybrid } from './hybrid-kem';
@@ -133,6 +133,9 @@ export const encryptWithPassword = async ({
   zeroBytes(key);
   zeroBytes(sharedSecret);
 
+  const payload = await bytesToBase64Async(ciphertext);
+  zeroBytes(ciphertext);
+
   const encryption: PasswordEncryption = {
     type: 'password',
     algorithm: ENCRYPTION_ALGORITHM_PASSWORD,
@@ -148,7 +151,7 @@ export const encryptWithPassword = async ({
     created,
     hint,
     encryption,
-    payload: bytesToBase64(ciphertext)
+    payload
   };
 };
 
@@ -197,17 +200,18 @@ export const decryptWithPassword = async ({
   } catch {
     throw new Error('Decryption failed. Check your password and try again.');
   } finally {
+    zeroBytes(ciphertext);
     zeroBytes(key);
     zeroBytes(sharedSecret);
   }
 };
 
-export const encryptWithShamir = ({
+export const encryptWithShamir = async ({
   data,
   threshold,
   totalShares,
   hint
-}: ShamirEncryptOptions): { vault: Vault; shares: ShamirShare[] } => {
+}: ShamirEncryptOptions): Promise<{ vault: Vault; shares: ShamirShare[] }> => {
   const payloadBytes = serializeVaultData(data);
   const masterSeed = randomBytes(32);
   const receiverKeys = deriveHybridReceiverKeys(masterSeed);
@@ -230,6 +234,9 @@ export const encryptWithShamir = ({
   zeroBytes(sharedSecret);
   zeroBytes(masterSeed);
 
+  const payload = await bytesToBase64Async(ciphertext);
+  zeroBytes(ciphertext);
+
   const encryption: ShamirEncryption = {
     type: 'shamir',
     algorithm: ENCRYPTION_ALGORITHM_SHAMIR,
@@ -248,7 +255,7 @@ export const encryptWithShamir = ({
       created,
       hint,
       encryption,
-      payload: bytesToBase64(ciphertext)
+      payload
     },
     shares
   };
@@ -288,6 +295,7 @@ export const decryptWithShamir = ({ shares, vault }: ShamirDecryptOptions): Vaul
   } catch {
     throw new Error('Decryption failed. Check your shares and try again.');
   } finally {
+    zeroBytes(ciphertext);
     zeroBytes(masterSeed);
     zeroBytes(sharedSecret);
   }

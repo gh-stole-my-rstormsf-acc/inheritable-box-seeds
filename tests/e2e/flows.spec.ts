@@ -243,6 +243,62 @@ test('password encryption flow with attached files', async ({ page, context }, t
   expect(Buffer.compare(downloadedBytes, sourceBytes)).toBe(0);
 });
 
+test('large attached files are exported as external encrypted bundles', async ({ page, context }, testInfo) => {
+  await openCreator(page);
+  await page.fill('textarea[data-seed-mnemonic]', mnemonic);
+  await goToStep(page, 'files');
+  await page.check('input[data-files-enabled]');
+  await expect(page.locator('[data-file-limit-tooltip]')).toHaveAttribute(
+    'data-tooltip',
+    /up to 10 MB.*separate encrypted bundle/i
+  );
+
+  const sourcePath = testInfo.outputPath('oversized-export.bin');
+  const sourceBytes = Buffer.alloc(11 * 1024 * 1024, 7);
+  await writeFile(sourcePath, sourceBytes);
+  await page.setInputFiles('input[data-files-input]', sourcePath);
+
+  await expect(page.locator('.vault-file')).toHaveCount(1);
+  await expect(page.locator('[data-status-banner]')).toContainText(/separate encrypted bundle files/i);
+
+  await goToStep(page, 'paths');
+  await setNumericInput(page, 'input[data-path-count]', '1');
+  await fillPasswordFields(page);
+  await goToStep(page, 'finalize');
+  await page.click('[data-generate]');
+  await expect(page.locator('[data-download-vault-html]')).toBeEnabled({ timeout: 60000 });
+  await expect(page.locator('[data-download-external-bundle="0"]')).toBeVisible();
+
+  const [htmlDownload] = await Promise.all([
+    page.waitForEvent('download'),
+    page.click('[data-download-vault-html]')
+  ]);
+  const [bundleDownload] = await Promise.all([
+    page.waitForEvent('download', { timeout: 120000 }),
+    page.click('[data-download-external-bundle="0"]')
+  ]);
+
+  const vaultPath = testInfo.outputPath('vault-large-files.html');
+  const encryptedBundlePath = testInfo.outputPath('oversized-export.svf');
+  await htmlDownload.saveAs(vaultPath);
+  await bundleDownload.saveAs(encryptedBundlePath);
+
+  const vaultPage = await decryptVault(context, vaultPath);
+  await expect(vaultPage.locator('[data-files] .vault-files__table')).toHaveCount(1, { timeout: 60000 });
+  await expect(vaultPage.locator('[data-download-vault-file="0"]')).toContainText(/decrypt & download/i);
+  await vaultPage.setInputFiles('[data-external-vault-file-input="0"]', encryptedBundlePath);
+
+  const [download] = await Promise.all([
+    vaultPage.waitForEvent('download', { timeout: 120000 }),
+    vaultPage.click('[data-download-vault-file="0"]')
+  ]);
+  const decryptedPath = testInfo.outputPath('oversized-export.decrypted.bin');
+  await download.saveAs(decryptedPath);
+
+  const decryptedBytes = await readFile(decryptedPath);
+  expect(Buffer.compare(decryptedBytes, sourceBytes)).toBe(0);
+});
+
 test('shamir encryption flow', async ({ page, context }, testInfo) => {
   await openCreator(page);
   await generateVault(page);

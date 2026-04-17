@@ -42,8 +42,20 @@ describe('encryption flows', () => {
     await expect(decryptWithPassword({ password: 'wrong', vault })).rejects.toThrow();
   });
 
-  it('round-trips shamir encryption', () => {
-    const { vault, shares } = encryptWithShamir({
+  it('persists the selected Argon2 parameters in the vault metadata', async () => {
+    const customParams = { timeCost: 5, memoryCostMB: 1, parallelism: 1 };
+    const vault = await encryptWithPassword({
+      password: 'test-password',
+      data: sampleData,
+      params: customParams
+    });
+    expect(vault.encryption.argon2.timeCost).toBe(customParams.timeCost);
+    expect(vault.encryption.argon2.memoryCost).toBe(customParams.memoryCostMB);
+    expect(vault.encryption.argon2.parallelism).toBe(customParams.parallelism);
+  });
+
+  it('round-trips shamir encryption', async () => {
+    const { vault, shares } = await encryptWithShamir({
       data: sampleData,
       threshold: 2,
       totalShares: 3

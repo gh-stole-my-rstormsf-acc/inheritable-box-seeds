@@ -5,11 +5,15 @@ import { encryptWithPassword, encryptWithShamir } from '../shared/crypto/vault';
 import { buildVaultHtml } from '../vault/template';
 import { buildCiphertextMarkdown } from './cipherMarkdown';
 import { formatShareHex, formatShareMnemonic } from '../shared/crypto/shamir';
-import type { VaultData, VaultFileEntry } from '../shared/types';
+import type { ExternalVaultFileEntry, Vault, VaultData, VaultFileEntry } from '../shared/types';
 import { deriveKeyArgon2Worker } from './crypto/argon2Worker';
 import { validateArgon2Params, DEFAULT_ARGON2_MIN } from './validation/argon2';
 import { canRemovePath, getOnlyPathTooltip, getTotalPreviewCount, shouldShowLargePreviewWarning } from './pathUi';
 import { FAQ_CATEGORIES, FAQ_ENTRY_COUNT } from './faqContent';
+import { getArgon2MemoryFeasibilityError, getDefaultArgon2PresetId, getSafeArgon2MemoryLimitMB } from '../shared/argon2Safety';
+import { MAX_VAULT_FILE_COUNT, MAX_VAULT_TOTAL_FILE_BYTES, MAX_VAULT_TOTAL_FILE_LABEL } from '../shared/vaultAttachments';
+import { buildExternalBundleFileName, buildExternalFileBundleMetadata, FILE_BUNDLE_CHUNK_SIZE } from '../shared/fileBundle';
+import { encryptExternalFileToBlob } from '../shared/fileBundleWorker';
 
 interface PathForm {
   id: string;
@@ -40,7 +44,7 @@ interface FileForm {
   size: number;
   label: string;
   openHint: string;
-  dataBase64: string;
+  sourceFile: File;
 }
 
 interface EncryptionState {
@@ -58,21 +62,27 @@ interface EncryptionState {
   totalShares: number;
 }
 
+interface GeneratedExternalBundleFile {
+  id: string;
+  entry: ExternalVaultFileEntry;
+  sourceFile: File;
+}
+
 interface GeneratedState {
-  vaultHtml: string;
-  cipherMd: string;
+  vault: Vault;
   shares: Array<{ id: number; words: string; hex: string }>;
   fileCount: number;
   totalFileBytes: number;
+  externalBundleFiles: GeneratedExternalBundleFile[];
 }
 
 interface PreparedShamirState {
   fingerprint: string;
-  vaultHtml: string;
-  cipherMd: string;
+  vault: Vault;
   shares: Array<{ id: number; words: string; hex: string }>;
   fileCount: number;
   totalFileBytes: number;
+  externalBundleFiles: GeneratedExternalBundleFile[];
 }
 
 type WizardStepId = 'seeds' | 'files' | 'paths' | 'security' | 'finalize';
@@ -152,13 +162,16 @@ if (FAST_CRYPTO_FLAG && import.meta.env.PROD) {
 const FAST_CRYPTO = FAST_CRYPTO_FLAG && !import.meta.env.PROD;
 const FAST_PARAMS = { timeCost: 2, memoryCostMB: 1, parallelism: 1 };
 const DEFAULT_STATUS_MESSAGE = 'Complete each step to generate your vault.';
-const MAX_VAULT_FILE_COUNT = 12;
-const MAX_VAULT_TOTAL_FILE_BYTES = 25 * 1024 * 1024;
 const CREATOR_HASH_HOME = '#home';
 const CREATOR_HASH_FAQ = '#faq';
 const CREATOR_HASH_WIZARD = '#create';
+const DEVICE_MEMORY_GB =
+  typeof navigator === 'undefined' ? undefined : (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+const ARGON2_MEMORY_LIMIT_MB = getSafeArgon2MemoryLimitMB(DEVICE_MEMORY_GB);
 const GITHUB_RELEASES_STANDALONE_URL =
   'https://github.com/gh-stole-my-rstormsf-acc/inheritable-box-seeds/releases/latest/download/seed-vault-standalone.html';
+const FILE_ATTACHMENTS_LIMIT_TOOLTIP =
+  `Only up to ${MAX_VAULT_TOTAL_FILE_LABEL} total is embedded directly in the self-contained vault HTML. Larger files are exported as separate encrypted bundle files.`;
 
 const getViewFromHash = (hash: string): CreatorView => {
   const normalized = hash.trim().toLowerCase();
@@ -181,7 +194,7 @@ const state = {
     password: '',
     confirm: '',
     hint: '',
-    argonPresetId: 'high',
+    argonPresetId: getDefaultArgon2PresetId(DEVICE_MEMORY_GB),
     argonCustom: {
       timeCost: DEFAULT_ARGON2_MIN.timeCost,
       memoryCostMB: DEFAULT_ARGON2_MIN.memoryCostMB,
@@ -493,14 +506,24 @@ const passwordStrength = (password: string) => {
   return score;
 };
 
+const revokeObjectUrlLater = (url: string) => {
+  window.setTimeout(() => {
+    URL.revokeObjectURL(url);
+  }, 60000);
+};
+
 const downloadFile = (content: string, filename: string, mimeType: string) => {
   const blob = new Blob([content], { type: mimeType });
+  downloadBlob(blob, filename);
+};
+
+const downloadBlob = (blob: Blob, filename: string) => {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
   anchor.download = filename;
   anchor.click();
-  URL.revokeObjectURL(url);
+  revokeObjectUrlLater(url);
 };
 
 const formatBytes = (value: number) => {
@@ -509,15 +532,24 @@ const formatBytes = (value: number) => {
   return `${(value / (1024 * 1024)).toFixed(2)} MB`;
 };
 
-const toBase64 = (bytes: Uint8Array) => {
-  let binary = '';
-  const chunkSize = 0x8000;
-  for (let index = 0; index < bytes.length; index += chunkSize) {
-    const chunk = bytes.subarray(index, index + chunkSize);
-    binary += String.fromCharCode(...chunk);
-  }
-  return btoa(binary);
-};
+const readFileAsBase64 = (file: File) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== 'string') {
+        reject(new Error(`Failed to read "${file.name}".`));
+        return;
+      }
+      const separatorIndex = reader.result.indexOf(',');
+      if (separatorIndex < 0) {
+        reject(new Error(`Failed to encode "${file.name}".`));
+        return;
+      }
+      resolve(reader.result.slice(separatorIndex + 1));
+    };
+    reader.onerror = () => reject(reader.error ?? new Error(`Failed to read "${file.name}".`));
+    reader.readAsDataURL(file);
+  });
 
 const sanitizeFileName = (value: string) =>
   value.replace(/[\\/]/g, '-').replace(/[^\w.\- ]+/g, '').trim() || 'vault-file.bin';
@@ -543,6 +575,8 @@ const inferOpenHint = (fileName: string) => {
 };
 
 const getEffectiveFiles = () => (state.fileAttachmentsEnabled ? state.files : []);
+const shouldUseExternalFileBundle = (files = getEffectiveFiles()) =>
+  files.reduce((sum, file) => sum + file.size, 0) > MAX_VAULT_TOTAL_FILE_BYTES;
 
 const buildFileBundleSummary = (data: VaultData) => ({
   fileCount: data.files?.length ?? 0,
@@ -558,29 +592,29 @@ const addSelectedFiles = async (inputFiles: File[]) => {
   }
 
   const totalBytes = currentFiles.reduce((sum, file) => sum + file.size, 0) + inputFiles.reduce((sum, file) => sum + file.size, 0);
-  if (totalBytes > MAX_VAULT_TOTAL_FILE_BYTES) {
-    setStatus(`Attached files exceed ${formatBytes(MAX_VAULT_TOTAL_FILE_BYTES)} total.`, 'error');
-    return;
-  }
-
-  const converted = await Promise.all(
-    inputFiles.map(async (file) => {
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      return {
+  const converted = inputFiles.map(
+    (file) =>
+      ({
         id: crypto.randomUUID(),
         fileName: sanitizeFileName(file.name),
         mimeType: file.type || 'application/octet-stream',
         size: file.size,
         label: sanitizeFileName(file.name),
         openHint: inferOpenHint(file.name),
-        dataBase64: toBase64(bytes)
-      } as FileForm;
-    })
+        sourceFile: file
+      }) as FileForm
   );
 
   state.files.push(...converted);
   invalidateShamirPreparation();
   render();
+  if (totalBytes > MAX_VAULT_TOTAL_FILE_BYTES) {
+    setStatus(
+      `Attached ${converted.length} file${converted.length === 1 ? '' : 's'} for encryption. Finalize will export them as separate encrypted bundle files because the self-contained HTML limit is ${MAX_VAULT_TOTAL_FILE_LABEL}.`,
+      'info'
+    );
+    return;
+  }
   setStatus(`Attached ${converted.length} file${converted.length === 1 ? '' : 's'} for encryption.`, 'info');
 };
 
@@ -831,11 +865,6 @@ const validateFilesSection = () => {
     errors.push(`You can attach up to ${MAX_VAULT_FILE_COUNT} files.`);
   }
 
-  const totalBytes = state.files.reduce((sum, file) => sum + file.size, 0);
-  if (totalBytes > MAX_VAULT_TOTAL_FILE_BYTES) {
-    errors.push(`Attached files exceed ${formatBytes(MAX_VAULT_TOTAL_FILE_BYTES)} total.`);
-  }
-
   state.files.forEach((file) => {
     if (!file.label.trim()) {
       errors.push(`File label is required for "${file.fileName}".`);
@@ -843,6 +872,42 @@ const validateFilesSection = () => {
   });
 
   return errors;
+};
+
+const getSelectedArgonParams = () => {
+  if (state.encryption.argonPresetId === 'custom') {
+    return state.encryption.argonCustom;
+  }
+  const preset = ARGON2_PRESETS.find((candidate) => candidate.id === state.encryption.argonPresetId) ?? ARGON2_PRESETS[0];
+  return {
+    timeCost: preset.timeCost,
+    memoryCostMB: preset.memoryCostMB,
+    parallelism: preset.parallelism
+  };
+};
+
+const getArgonCustomHelperState = () => {
+  const validation = validateArgon2Params(state.encryption.argonCustom);
+  if (!validation.valid) {
+    return { text: validation.error ?? 'Invalid Argon2 parameters.', error: true };
+  }
+  const feasibilityError = getArgon2MemoryFeasibilityError(state.encryption.argonCustom.memoryCostMB, DEVICE_MEMORY_GB);
+  if (feasibilityError) {
+    return { text: feasibilityError, error: true };
+  }
+  return { text: 'Custom parameters look good.', error: false };
+};
+
+const getArgonPresetHintState = () => {
+  const selectedParams = getSelectedArgonParams();
+  const feasibilityError = getArgon2MemoryFeasibilityError(selectedParams.memoryCostMB, DEVICE_MEMORY_GB);
+  if (feasibilityError) {
+    return { text: feasibilityError, error: true };
+  }
+  return {
+    text: `Higher settings increase security but can crash low-memory browsers. This device should stay at ${ARGON2_MEMORY_LIMIT_MB} MB Argon2 memory or below.`,
+    error: false
+  };
 };
 
 const validateSecuritySection = () => {
@@ -860,6 +925,10 @@ const validateSecuritySection = () => {
       if (!validation.valid) {
         errors.push(validation.error ?? 'Invalid Argon2 parameters.');
       }
+    }
+    const feasibilityError = getArgon2MemoryFeasibilityError(getSelectedArgonParams().memoryCostMB, DEVICE_MEMORY_GB);
+    if (feasibilityError) {
+      errors.push(feasibilityError);
     }
   } else if (state.encryption.threshold < 2 || state.encryption.totalShares < state.encryption.threshold) {
     errors.push('Shamir threshold must be at least 2 and <= total shares.');
@@ -974,8 +1043,8 @@ const goToPreviousStep = () => {
   render();
 };
 
-const buildVaultData = (): VaultData => ({
-  seeds: state.seeds.map((seed) => ({
+const buildVaultSeeds = () =>
+  state.seeds.map((seed) => ({
     label: seed.label.trim(),
     mnemonic: normalizeMnemonic(seed.mnemonic),
     paths: seed.paths.map((path) => ({
@@ -985,22 +1054,86 @@ const buildVaultData = (): VaultData => ({
       passphraseLabel: path.passphrase ? path.passphraseLabel.trim() : '',
       deriveCount: path.deriveCount
     }))
-  })),
-  files: getEffectiveFiles().length
-    ? getEffectiveFiles().map((file): VaultFileEntry => ({
+  }));
+
+const buildFingerprintFileMetadata = (files: FileForm[]) => {
+  const externalBundle = shouldUseExternalFileBundle(files);
+  return files.map((file, index) => ({
+    id: file.id,
+    label: file.label.trim(),
+    fileName: sanitizeFileName(file.fileName),
+    mimeType: file.mimeType,
+    size: file.size,
+    openHint: file.openHint.trim(),
+    storage: externalBundle ? 'external' : 'inline',
+    bundleFileName: externalBundle ? buildExternalBundleFileName(index, sanitizeFileName(file.fileName)) : undefined,
+    chunkSize: externalBundle ? FILE_BUNDLE_CHUNK_SIZE : undefined
+  }));
+};
+
+const buildVaultFiles = async (
+  files: FileForm[]
+): Promise<{ entries: VaultFileEntry[]; externalBundleFiles: GeneratedExternalBundleFile[] }> => {
+  const externalBundle = shouldUseExternalFileBundle(files);
+  if (files.length === 0) {
+    return { entries: [], externalBundleFiles: [] };
+  }
+  if (!externalBundle) {
+    const output: VaultFileEntry[] = [];
+    for (const file of files) {
+      output.push({
         label: file.label.trim(),
         fileName: sanitizeFileName(file.fileName),
         mimeType: file.mimeType,
         size: file.size,
         openHint: file.openHint.trim(),
-        dataBase64: file.dataBase64
-      }))
-    : undefined
-});
+        dataBase64: await readFileAsBase64(file.sourceFile)
+      });
+    }
+    return { entries: output, externalBundleFiles: [] };
+  }
 
-const buildShamirFingerprint = (data: VaultData) =>
+  const externalBundleFiles = files.map((file, index) => {
+    const metadata = buildExternalFileBundleMetadata({
+      index,
+      label: file.label.trim(),
+      fileName: sanitizeFileName(file.fileName),
+      mimeType: file.mimeType,
+      openHint: file.openHint.trim(),
+      size: file.size
+    });
+    return {
+      id: file.id,
+      entry: metadata.entry,
+      sourceFile: file.sourceFile
+    };
+  });
+
+  return {
+    entries: externalBundleFiles.map((file) => file.entry),
+    externalBundleFiles
+  };
+};
+
+const buildVaultData = async (): Promise<{
+  data: VaultData;
+  externalBundleFiles: GeneratedExternalBundleFile[];
+}> => {
+  const files = getEffectiveFiles();
+  const builtFiles = await buildVaultFiles(files);
+  return {
+    data: {
+      seeds: buildVaultSeeds(),
+      files: builtFiles.entries.length ? builtFiles.entries : undefined
+    },
+    externalBundleFiles: builtFiles.externalBundleFiles
+  };
+};
+
+const buildShamirFingerprint = () =>
   JSON.stringify({
-    data,
+    seeds: buildVaultSeeds(),
+    files: buildFingerprintFileMetadata(getEffectiveFiles()),
     threshold: state.encryption.threshold,
     totalShares: state.encryption.totalShares,
     hint: state.encryption.hint.trim() || ''
@@ -1008,8 +1141,7 @@ const buildShamirFingerprint = (data: VaultData) =>
 
 const hasPreparedShamirForCurrentState = () => {
   if (state.encryption.mode !== 'shamir' || !state.preparedShamir) return false;
-  const data = buildVaultData();
-  return state.preparedShamir.fingerprint === buildShamirFingerprint(data);
+  return state.preparedShamir.fingerprint === buildShamirFingerprint();
 };
 
 const clearSensitiveState = () => {
@@ -1029,6 +1161,17 @@ const clearSensitiveState = () => {
   state.fileAttachmentsEnabled = false;
   state.files = [];
   render();
+};
+
+const exportExternalBundleFile = async (file: GeneratedExternalBundleFile) => {
+  const blob = await encryptExternalFileToBlob({
+    file: file.sourceFile,
+    bundleId: file.entry.bundleId,
+    keyBase64: file.entry.keyBase64,
+    noncePrefixBase64: file.entry.noncePrefixBase64,
+    chunkSize: file.entry.chunkSize
+  });
+  downloadBlob(blob, file.entry.bundleFileName);
 };
 
 const previewWorker = new Worker(new URL('./derivation/preview.worker.ts', import.meta.url), { type: 'module' });
@@ -1170,7 +1313,7 @@ const handleGenerate = async () => {
   startGenerateProgressFallback();
 
   try {
-    const data = buildVaultData();
+    const { data, externalBundleFiles } = await buildVaultData();
     const onProgress = (value: number) => {
       stopGenerateProgressFallback();
       state.progress = Math.max(0, Math.min(1, value));
@@ -1185,18 +1328,16 @@ const handleGenerate = async () => {
         password: state.encryption.password,
         data,
         hint: state.encryption.hint.trim() || undefined,
-        params: FAST_CRYPTO ? FAST_PARAMS : undefined,
+        params: FAST_CRYPTO ? FAST_PARAMS : getSelectedArgonParams(),
         kdf: deriveKeyArgon2Worker,
         onProgress
       });
-      const html = buildVaultHtml(vault);
-      const cipherMd = buildCiphertextMarkdown(vault, fileSummary);
       state.generated = {
-        vaultHtml: html,
-        cipherMd,
+        vault,
         shares: [],
         fileCount: fileSummary.fileCount,
-        totalFileBytes: fileSummary.totalFileBytes
+        totalFileBytes: fileSummary.totalFileBytes,
+        externalBundleFiles
       };
       setStatus('Vault generated. Use the download buttons below.', 'info');
     } else {
@@ -1205,11 +1346,11 @@ const handleGenerate = async () => {
         throw new Error('Generate and review Shamir shares in Step 3 before finalizing.');
       }
       state.generated = {
-        vaultHtml: prepared.vaultHtml,
-        cipherMd: prepared.cipherMd,
+        vault: prepared.vault,
         shares: prepared.shares,
         fileCount: prepared.fileCount,
-        totalFileBytes: prepared.totalFileBytes
+        totalFileBytes: prepared.totalFileBytes,
+        externalBundleFiles: prepared.externalBundleFiles
       };
       setStatus('Vault generated. Use the download buttons below.', 'info');
     }
@@ -1230,8 +1371,9 @@ const handleDownloadVaultHtml = () => {
     setStatus('Generate a vault first.', 'error');
     return;
   }
-  const filename = `seed-vault-${md5Hex(state.generated.vaultHtml)}.html`;
-  downloadFile(state.generated.vaultHtml, filename, 'text/html');
+  const vaultHtml = buildVaultHtml(state.generated.vault);
+  const filename = `seed-vault-${md5Hex(vaultHtml)}.html`;
+  downloadFile(vaultHtml, filename, 'text/html');
   setStatus('Seed vault HTML download started.', 'info');
 };
 
@@ -1240,9 +1382,28 @@ const handleDownloadCipherMd = () => {
     setStatus('Generate a vault first.', 'error');
     return;
   }
-  const filename = `seed-vault-cipher-${md5Hex(state.generated.cipherMd)}.md`;
-  downloadFile(state.generated.cipherMd, filename, 'text/markdown');
+  const cipherMd = buildCiphertextMarkdown(state.generated.vault, {
+    fileCount: state.generated.fileCount,
+    totalFileBytes: state.generated.totalFileBytes
+  });
+  const filename = `seed-vault-cipher-${md5Hex(cipherMd)}.md`;
+  downloadFile(cipherMd, filename, 'text/markdown');
   setStatus('Ciphertext markdown download started.', 'info');
+};
+
+const handleDownloadExternalBundle = async (index: number) => {
+  const target = state.generated?.externalBundleFiles[index];
+  if (!target) {
+    setStatus('Generate a vault first.', 'error');
+    return;
+  }
+  setStatus(`Preparing ${target.entry.bundleFileName}...`, 'info');
+  try {
+    await exportExternalBundleFile(target);
+    setStatus(`Encrypted bundle download started for ${target.entry.bundleFileName}.`, 'info');
+  } catch (error) {
+    setStatus(`Failed to export ${target.entry.bundleFileName}: ${(error as Error).message}`, 'error');
+  }
 };
 
 const buildWizardStepper = () => {
@@ -1401,10 +1562,24 @@ const buildFilesSection = () => {
   section.appendChild(toggleRow);
 
   section.appendChild(
-    el('p', {
-      className: 'helper',
-      text: `Max ${MAX_VAULT_FILE_COUNT} files, ${formatBytes(MAX_VAULT_TOTAL_FILE_BYTES)} total.`
-    })
+    el('div', { className: 'files-limit-row' }, [
+      el('p', {
+        className: 'helper',
+        text: `Max ${MAX_VAULT_FILE_COUNT} files. Up to ${formatBytes(MAX_VAULT_TOTAL_FILE_BYTES)} total stays self-contained in the HTML; larger bundles are exported as separate encrypted files.`
+      }),
+      el('button', {
+        className: 'ghost tooltip-button',
+        text: 'Why 10 MB?',
+        dataset: {
+          fileLimitTooltip: '',
+          tooltip: FILE_ATTACHMENTS_LIMIT_TOOLTIP
+        },
+        attrs: {
+          type: 'button',
+          'aria-label': FILE_ATTACHMENTS_LIMIT_TOOLTIP
+        }
+      })
+    ])
   );
 
   if (!state.fileAttachmentsEnabled) {
@@ -1889,13 +2064,18 @@ const syncArgonPresetUI = () => {
   const customHost = document.querySelector<HTMLElement>('[data-argon-custom]');
   if (customHost) customHost.hidden = !showCustom;
   const presetHint = document.querySelector<HTMLElement>('[data-argon-preset-hint]');
-  if (presetHint) presetHint.hidden = showCustom;
+  if (presetHint) {
+    const hintState = getArgonPresetHintState();
+    presetHint.hidden = showCustom;
+    presetHint.textContent = hintState.text;
+    presetHint.classList.toggle('error', hintState.error);
+  }
 
   const helper = document.querySelector<HTMLParagraphElement>('[data-argon-error]');
   if (helper) {
-    const validation = validateArgon2Params(state.encryption.argonCustom);
-    helper.textContent = validation.valid ? 'Custom parameters look good.' : validation.error ?? '';
-    helper.classList.toggle('error', !validation.valid);
+    const helperState = getArgonCustomHelperState();
+    helper.textContent = helperState.text;
+    helper.classList.toggle('error', helperState.error);
   }
 
   syncSecurityFieldErrorUI();
@@ -1967,9 +2147,9 @@ const bindSecurityFieldListeners = (scope: ParentNode) => {
     state.encryption.argonCustom.timeCost = Number((event.target as HTMLInputElement).value);
     const helper = scope.querySelector<HTMLParagraphElement>('[data-argon-error]');
     if (helper) {
-      const validation = validateArgon2Params(state.encryption.argonCustom);
-      helper.textContent = validation.valid ? 'Custom parameters look good.' : validation.error ?? '';
-      helper.classList.toggle('error', !validation.valid);
+      const helperState = getArgonCustomHelperState();
+      helper.textContent = helperState.text;
+      helper.classList.toggle('error', helperState.error);
     }
     syncSecurityFieldErrorUI();
   });
@@ -1978,9 +2158,9 @@ const bindSecurityFieldListeners = (scope: ParentNode) => {
     state.encryption.argonCustom.memoryCostMB = Number((event.target as HTMLInputElement).value);
     const helper = scope.querySelector<HTMLParagraphElement>('[data-argon-error]');
     if (helper) {
-      const validation = validateArgon2Params(state.encryption.argonCustom);
-      helper.textContent = validation.valid ? 'Custom parameters look good.' : validation.error ?? '';
-      helper.classList.toggle('error', !validation.valid);
+      const helperState = getArgonCustomHelperState();
+      helper.textContent = helperState.text;
+      helper.classList.toggle('error', helperState.error);
     }
     syncSecurityFieldErrorUI();
   });
@@ -1989,9 +2169,9 @@ const bindSecurityFieldListeners = (scope: ParentNode) => {
     state.encryption.argonCustom.parallelism = Number((event.target as HTMLInputElement).value);
     const helper = scope.querySelector<HTMLParagraphElement>('[data-argon-error]');
     if (helper) {
-      const validation = validateArgon2Params(state.encryption.argonCustom);
-      helper.textContent = validation.valid ? 'Custom parameters look good.' : validation.error ?? '';
-      helper.classList.toggle('error', !validation.valid);
+      const helperState = getArgonCustomHelperState();
+      helper.textContent = helperState.text;
+      helper.classList.toggle('error', helperState.error);
     }
     syncSecurityFieldErrorUI();
   });
@@ -2231,7 +2411,7 @@ const buildShamirSharesPanel = (
   return sharesEl;
 };
 
-const prepareShamirShares = () => {
+const prepareShamirShares = async () => {
   state.securityValidationArmed = true;
   const errors = [...validateSeedsSection(), ...validateFilesSection(), ...validatePathsSection(), ...validateSecuritySection()];
   if (errors.length) {
@@ -2241,27 +2421,25 @@ const prepareShamirShares = () => {
   }
 
   try {
-    const data = buildVaultData();
+    const { data, externalBundleFiles } = await buildVaultData();
     const fileSummary = buildFileBundleSummary(data);
-    const { vault, shares } = encryptWithShamir({
+    const { vault, shares } = await encryptWithShamir({
       data,
       threshold: state.encryption.threshold,
       totalShares: state.encryption.totalShares,
       hint: state.encryption.hint.trim() || undefined
     });
-    const vaultHtml = buildVaultHtml(vault);
-    const cipherMd = buildCiphertextMarkdown(vault, fileSummary);
     state.preparedShamir = {
-      fingerprint: buildShamirFingerprint(data),
-      vaultHtml,
-      cipherMd,
+      fingerprint: buildShamirFingerprint(),
+      vault,
       shares: shares.map((share) => ({
         id: share.id,
         words: formatShareMnemonic(share),
         hex: formatShareHex(share)
       })),
       fileCount: fileSummary.fileCount,
-      totalFileBytes: fileSummary.totalFileBytes
+      totalFileBytes: fileSummary.totalFileBytes,
+      externalBundleFiles
     };
     state.stepError = '';
     setStatus('Shamir shares generated. Review them, then continue to Finalize.', 'info');
@@ -2273,10 +2451,11 @@ const prepareShamirShares = () => {
 
 const buildSecuritySection = () => {
   const fieldErrors = collectFieldErrors();
-  const argonCustomValidation =
+  const argonCustomHelperState =
     state.encryption.mode === 'password' && state.encryption.argonPresetId === 'custom'
-      ? validateArgon2Params(state.encryption.argonCustom)
-      : { valid: true };
+      ? getArgonCustomHelperState()
+      : { text: 'Custom parameters look good.', error: false };
+  const argonPresetHintState = getArgonPresetHintState();
 
   const section = el('section', { className: 'card wizard-card', dataset: { securitySection: '' } });
   section.appendChild(
@@ -2406,18 +2585,18 @@ const buildSecuritySection = () => {
     customFields.appendChild(parallelRow);
     customFields.appendChild(
       el('p', {
-        className: `helper ${argonCustomValidation.valid ? '' : 'error'}`,
+        className: `helper ${argonCustomHelperState.error ? 'error' : ''}`,
         dataset: { argonError: '' },
-        text: argonCustomValidation.valid ? 'Custom parameters look good.' : argonCustomValidation.error ?? ''
+        text: argonCustomHelperState.text
       })
     );
     section.appendChild(customFields);
     section.appendChild(
       el('p', {
-        className: 'helper',
+        className: `helper ${argonPresetHintState.error ? 'error' : ''}`,
         dataset: { argonPresetHint: '' },
         hidden: state.encryption.argonPresetId === 'custom',
-        text: 'Higher settings increase security but may take up to 85 seconds on mobile.'
+        text: argonPresetHintState.text
       })
     );
   } else {
@@ -2551,6 +2730,27 @@ const buildFinalizeSection = () => {
     })
   ]);
   section.appendChild(downloadActions);
+
+  if (state.generated?.externalBundleFiles.length) {
+    section.appendChild(
+      el('p', {
+        className: 'helper',
+        text: 'Large attached files are exported separately. Download each encrypted bundle file and keep it with the vault HTML.'
+      })
+    );
+    const externalBundleActions = el('div', { className: 'finalize-downloads' });
+    state.generated.externalBundleFiles.forEach((file, index) => {
+      externalBundleActions.appendChild(
+        el('button', {
+          className: 'ghost',
+          dataset: { downloadExternalBundle: String(index) },
+          disabled: state.isGenerating,
+          text: `Download ${file.entry.bundleFileName}`
+        })
+      );
+    });
+    section.appendChild(externalBundleActions);
+  }
 
   const progressClassName =
     state.isGenerating && state.progressMode === 'indeterminate' ? 'progress progress--indeterminate' : 'progress';
@@ -3105,6 +3305,13 @@ const render = () => {
   root.querySelector<HTMLButtonElement>('[data-generate]')?.addEventListener('click', handleGenerate);
   root.querySelector<HTMLButtonElement>('[data-download-vault-html]')?.addEventListener('click', handleDownloadVaultHtml);
   root.querySelector<HTMLButtonElement>('[data-download-cipher-md]')?.addEventListener('click', handleDownloadCipherMd);
+  root.querySelectorAll<HTMLButtonElement>('[data-download-external-bundle]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const index = Number(button.dataset.downloadExternalBundle);
+      if (Number.isNaN(index)) return;
+      void handleDownloadExternalBundle(index);
+    });
+  });
 
   bindShareDisplayListeners(root);
 };

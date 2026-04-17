@@ -1,6 +1,9 @@
 import { deriveEvmAddresses } from '../shared/derivation/evm';
 import { buildAddressCsv } from '../shared/derivation/csv';
+import { decryptExternalFileToBlob } from '../shared/fileBundleWorker';
+import { getArgon2MemoryFeasibilityError } from '../shared/argon2Safety';
 import type { Vault, VaultData, PathConfig, VaultFileEntry } from '../shared/types';
+import { isExternalVaultFileEntry, isInlineVaultFileEntry } from '../shared/types';
 let vault: Vault;
 let root: HTMLElement;
 
@@ -23,6 +26,8 @@ export interface VaultRuntimeHandlers {
 }
 
 type DecryptProgressMode = 'determinate' | 'indeterminate';
+const DEVICE_MEMORY_GB =
+  typeof navigator === 'undefined' ? undefined : (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
 
 const state: {
   decrypted?: VaultData;
@@ -199,16 +204,45 @@ const formatBytes = (value: number) => {
 };
 
 const decodeBase64 = (value: string) => {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
+  const chunkSize = 4 * 8192;
+  const paddingLength = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
+  const bytes = new Uint8Array(Math.floor((value.length * 3) / 4) - paddingLength);
+  let offset = 0;
+  for (let index = 0; index < value.length;) {
+    let end = Math.min(value.length, index + chunkSize);
+    if (end < value.length) {
+      const remainder = (end - index) % 4;
+      if (remainder !== 0) {
+        end -= remainder;
+      }
+    }
+    const binary = atob(value.slice(index, end));
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[offset + i] = binary.charCodeAt(i);
+    }
+    offset += binary.length;
+    index = end;
   }
   return bytes;
 };
 
 const sanitizeDownloadName = (value: string) =>
   value.replace(/[\\/]/g, '-').replace(/[^\w.\- ]+/g, '').trim() || 'vault-file.bin';
+
+const revokeObjectUrlLater = (url: string) => {
+  window.setTimeout(() => {
+    URL.revokeObjectURL(url);
+  }, 60000);
+};
+
+const downloadBlob = (blob: Blob, filename: string) => {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  revokeObjectUrlLater(url);
+};
 
 const attachRevealHandlers = (scope: ParentNode) => {
   scope.querySelectorAll<HTMLButtonElement>('[data-reveal]').forEach((button) => {
@@ -336,12 +370,33 @@ const renderVaultFiles = (data?: VaultData) => {
     row.appendChild(el('td', { text: file.mimeType || 'application/octet-stream' }));
     row.appendChild(el('td', { className: 'vault-files__hint', text: file.openHint?.trim() || '[none]' }));
     const actionCell = el('td');
-    actionCell.appendChild(
-      el('button', {
-        dataset: { downloadVaultFile: String(index) },
-        text: 'Download'
-      })
-    );
+    if (isInlineVaultFileEntry(file)) {
+      actionCell.appendChild(
+        el('button', {
+          dataset: { downloadVaultFile: String(index) },
+          text: 'Download'
+        })
+      );
+    } else {
+      actionCell.appendChild(
+        el('p', {
+          className: 'helper',
+          text: `Select encrypted bundle: ${file.bundleFileName}`
+        })
+      );
+      actionCell.appendChild(
+        el('input', {
+          type: 'file',
+          dataset: { externalVaultFileInput: String(index) }
+        })
+      );
+      actionCell.appendChild(
+        el('button', {
+          dataset: { downloadVaultFile: String(index) },
+          text: 'Decrypt & Download'
+        })
+      );
+    }
     row.appendChild(actionCell);
     body.appendChild(row);
   });
@@ -350,21 +405,43 @@ const renderVaultFiles = (data?: VaultData) => {
   container.appendChild(tableWrap);
 
   container.querySelectorAll<HTMLButtonElement>('[data-download-vault-file]').forEach((button) => {
-    button.addEventListener('click', () => {
+    button.addEventListener('click', async () => {
       if (!state.decrypted) return;
       const index = Number(button.dataset.downloadVaultFile);
       const target = state.decrypted.files?.[index];
       if (!target) return;
-      const blob = new Blob([decodeBase64(target.dataBase64)], {
-        type: target.mimeType || 'application/octet-stream'
-      });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = sanitizeDownloadName(target.fileName);
-      anchor.click();
-      URL.revokeObjectURL(url);
-      scheduleAutoClear();
+      if (isInlineVaultFileEntry(target)) {
+        const blob = new Blob([decodeBase64(target.dataBase64)], {
+          type: target.mimeType || 'application/octet-stream'
+        });
+        downloadBlob(blob, sanitizeDownloadName(target.fileName));
+        scheduleAutoClear();
+        return;
+      }
+
+      const fileInput = container.querySelector<HTMLInputElement>(`[data-external-vault-file-input="${index}"]`);
+      const encryptedFile = fileInput?.files?.[0];
+      if (!encryptedFile) {
+        setStatus(`Choose ${target.bundleFileName} before decrypting this file.`, 'error');
+        return;
+      }
+
+      setStatus(`Decrypting ${target.fileName}...`, 'info');
+      try {
+        const blob = await decryptExternalFileToBlob({
+          encryptedFile,
+          bundleId: target.bundleId,
+          keyBase64: target.keyBase64,
+          noncePrefixBase64: target.noncePrefixBase64,
+          chunkSize: target.chunkSize,
+          totalPlaintextBytes: target.size
+        });
+        downloadBlob(blob, sanitizeDownloadName(target.fileName));
+        setStatus(`Decrypted file download started for ${target.fileName}.`, 'info');
+        scheduleAutoClear();
+      } catch (error) {
+        setStatus((error as Error).message, 'error');
+      }
     });
   });
 };
@@ -483,7 +560,7 @@ const handleExportCsv = () => {
   anchor.href = url;
   anchor.download = 'seed-vault-addresses.csv';
   anchor.click();
-  URL.revokeObjectURL(url);
+  revokeObjectUrlLater(url);
   scheduleAutoClear();
 };
 
@@ -678,6 +755,16 @@ const renderApp = (handlers: VaultRuntimeHandlers) => {
     decryptButton.addEventListener('click', async () => {
       if (!passwordInput.value) {
         setStatus('Enter your password.', 'error');
+        return;
+      }
+      const passwordEncryption = vault.encryption;
+      if (passwordEncryption.type !== 'password') {
+        setStatus('Password decryption metadata is invalid.', 'error');
+        return;
+      }
+      const feasibilityError = getArgon2MemoryFeasibilityError(passwordEncryption.argon2.memoryCost, DEVICE_MEMORY_GB);
+      if (feasibilityError) {
+        setStatus(feasibilityError, 'error');
         return;
       }
       let entry: { count: number; lastAttempt: number };
