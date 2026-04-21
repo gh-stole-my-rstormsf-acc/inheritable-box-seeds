@@ -14,6 +14,7 @@ import { getArgon2MemoryFeasibilityError, getDefaultArgon2PresetId, getSafeArgon
 import { MAX_VAULT_FILE_COUNT, MAX_VAULT_TOTAL_FILE_BYTES, MAX_VAULT_TOTAL_FILE_LABEL } from '../shared/vaultAttachments';
 import { buildExternalBundleFileName, buildExternalFileBundleMetadata, FILE_BUNDLE_CHUNK_SIZE } from '../shared/fileBundle';
 import { encryptExternalFileToBlob } from '../shared/fileBundleWorker';
+import { shouldUseModuleWorker } from '../shared/browserWorker';
 
 interface PathForm {
   id: string;
@@ -423,8 +424,7 @@ const syncCreatorHash = (view: CreatorView) => {
         ? CREATOR_HASH_FAQ
         : CREATOR_HASH_WIZARD;
   if (window.location.hash === targetHash) return;
-  const nextUrl = `${window.location.pathname}${window.location.search}${targetHash}`;
-  window.history.replaceState(null, '', nextUrl);
+  window.history.replaceState(null, '', targetHash);
 };
 
 const setCreatorView = (view: CreatorView, options: { syncHash?: boolean } = {}) => {
@@ -1198,7 +1198,12 @@ const exportExternalBundleFile = async (file: GeneratedExternalBundleFile) => {
   downloadBlob(blob, file.entry.bundleFileName);
 };
 
-const previewWorker = new Worker(new URL('./derivation/preview.worker.ts', import.meta.url), { type: 'module' });
+const PREVIEW_WORKER_ERROR_MESSAGE = 'Address preview worker failed. Retry or refresh the page.';
+const createPreviewWorker = () =>
+  shouldUseModuleWorker()
+    ? new Worker(new URL('./derivation/preview.worker.ts', import.meta.url), { type: 'module' })
+    : new Worker(new URL('./derivation/preview.worker.ts', import.meta.url));
+let previewWorker = createPreviewWorker();
 const previewTimers = new Map<string, number>();
 
 const renderPreviewTable = (addresses: string[]) => {
@@ -1240,31 +1245,57 @@ const updatePreviewUI = (seedId: string, pathId: string, path: PathForm) => {
   }
 };
 
-previewWorker.onmessage = (event) => {
-  const { requestId, seedId, pathId, addresses, error } = event.data as {
-    requestId: number;
-    seedId: string;
-    pathId: string;
-    addresses?: string[];
-    error?: string;
+const syncPreviewWorkerFailureUI = (message: string) => {
+  state.seeds.forEach((seed) => {
+    seed.paths.forEach((path) => {
+      if (path.previewStatus !== 'computing') return;
+      path.previewStatus = 'error';
+      path.previewMessage = message;
+      path.previewAddresses = [];
+      updatePreviewUI(seed.id, path.id, path);
+    });
+  });
+};
+
+const bindPreviewWorker = () => {
+  previewWorker.onmessage = (event) => {
+    const { requestId, seedId, pathId, addresses, error } = event.data as {
+      requestId: number;
+      seedId: string;
+      pathId: string;
+      addresses?: string[];
+      error?: string;
+    };
+
+    const seed = state.seeds.find((item) => item.id === seedId);
+    const path = seed?.paths.find((item) => item.id === pathId);
+    if (!seed || !path) return;
+    if (requestId !== path.previewRequestId) return;
+
+    if (error) {
+      path.previewStatus = 'error';
+      path.previewMessage = error;
+      path.previewAddresses = [];
+    } else {
+      path.previewStatus = 'ready';
+      path.previewAddresses = addresses ?? [];
+      path.previewMessage = `${path.previewAddresses.length} address${path.previewAddresses.length === 1 ? '' : 'es'}`;
+    }
+    updatePreviewUI(seedId, pathId, path);
   };
 
-  const seed = state.seeds.find((item) => item.id === seedId);
-  const path = seed?.paths.find((item) => item.id === pathId);
-  if (!seed || !path) return;
-  if (requestId !== path.previewRequestId) return;
+  const handlePreviewWorkerFailure = () => {
+    previewWorker.terminate();
+    syncPreviewWorkerFailureUI(PREVIEW_WORKER_ERROR_MESSAGE);
+    previewWorker = createPreviewWorker();
+    bindPreviewWorker();
+  };
 
-  if (error) {
-    path.previewStatus = 'error';
-    path.previewMessage = error;
-    path.previewAddresses = [];
-  } else {
-    path.previewStatus = 'ready';
-    path.previewAddresses = addresses ?? [];
-    path.previewMessage = `${path.previewAddresses.length} address${path.previewAddresses.length === 1 ? '' : 'es'}`;
-  }
-  updatePreviewUI(seedId, pathId, path);
+  previewWorker.onerror = handlePreviewWorkerFailure;
+  previewWorker.onmessageerror = handlePreviewWorkerFailure;
 };
+
+bindPreviewWorker();
 
 const schedulePreview = (seed: SeedForm, path: PathForm) => {
   const key = `${seed.id}:${path.id}`;

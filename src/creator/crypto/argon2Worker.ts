@@ -1,11 +1,14 @@
 import type { Argon2Params, Argon2Result } from '../../shared/crypto/argon2';
+import { shouldUseModuleWorker } from '../../shared/browserWorker';
 
 export const deriveKeyArgon2Worker = (
   password: string,
   params: Argon2Params,
   onProgress?: (progress: number) => void
 ): Promise<Argon2Result> => {
-  const worker = new Worker(new URL('./argon2.worker.ts', import.meta.url), { type: 'module' });
+  const worker = shouldUseModuleWorker()
+    ? new Worker(new URL('./argon2.worker.ts', import.meta.url), { type: 'module' })
+    : new Worker(new URL('./argon2.worker.ts', import.meta.url));
 
   return new Promise((resolve, reject) => {
     worker.onmessage = (event) => {

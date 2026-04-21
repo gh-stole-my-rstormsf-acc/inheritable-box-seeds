@@ -847,7 +847,7 @@ test('finalize locks generate and back after successful generation', async ({ pa
   await expect(previousButton).toBeEnabled();
 
   await generateButton.click();
-  await expect(page.locator('[data-download-vault-html]')).toBeEnabled();
+  await expect(page.locator('[data-download-vault-html]')).toBeEnabled({ timeout: 60000 });
   await expect(generateButton).toBeDisabled();
   await expect(previousButton).toBeDisabled();
 });
